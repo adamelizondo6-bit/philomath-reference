@@ -9,13 +9,13 @@
 
 [chrome]
 cdp_url = "http://127.0.0.1:9222"
-ttp_domain = ""                     # host shown in the address bar when logged in to TTP (no https://, no path)
+ttp_domain = "gmat.targettestprep.com"
 
 [vault]
-root = ''                           # Obsidian vault root, Windows path (single quotes)
-name = ''                           # vault name as Obsidian shows it; used for obsidian:// links in Excel. Usually the root folder's name.
-gmat_folder = ''                    # existing GMAT folder inside the vault, relative to root (read-only inventory only), e.g. 'GMAT'
-export_folder = 'GMAT/TTP Export'   # NEW folder the tool creates inside the vault; nothing else in the vault is touched
+root = 'C:\Vaults\Obsidian Vault'       # Obsidian vault root, Windows path (single quotes). Verify: this folder holds .obsidian\
+name = 'Obsidian Vault'                  # vault name as Obsidian shows it; used for obsidian:// links in Excel
+gmat_folder = '5 - Main Notes (Zettelkasten)\GMAT Prep'   # existing folder, relative to root; read-only inventory only
+export_folder = '5 - Main Notes (Zettelkasten)/GMAT Prep/TTP Export'   # NEW folder the tool creates; nothing else in the vault is touched
 image_format = "png"                # png | webp | jpg   (webp/jpg shrink Obsidian Sync usage)
 image_quality = 85
 

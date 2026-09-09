@@ -4,6 +4,9 @@ Newest first. Anything subjective waits for approval (PLAN.md non-negotiable 7).
 
 ## Task 0 (2026-09-09)
 
+- **Handoff to a local session.** See HANDOFF.md: Adam's answers, config values, and the
+  reason for moving from the cloud session to a local terminal.
+
 - **Location.** The plan assumes a new empty folder. The tool lives in `ttp-export/` inside the
   existing `philomath-reference` repository (a public GitHub Pages site) on branch
   `claude/september-14-deadline-qg7mce`. Consequence: `config.toml`, `data/`, `out/`, `.venv/` and
