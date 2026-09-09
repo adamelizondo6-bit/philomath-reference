@@ -1,0 +1,11 @@
+# Local-only: the tool root lives in a PUBLIC repo, so nothing personal or
+# anything copied from TTP may ever be committed.
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+config.toml
+data/
+out/
+*.zip

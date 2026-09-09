@@ -1,0 +1,25 @@
+# config.toml -- copy this file to config.toml and fill in the blanks.
+# config.toml is git-ignored: it never leaves this machine.
+#
+# TOML gotcha: Windows paths MUST be in single quotes (literal strings), so the
+# backslashes are not read as escape sequences:
+#     root = 'C:\Users\adam\Documents\Obsidian\MyVault'     # OK
+#     root = "C:\Users\adam\Documents\Obsidian\MyVault"     # BROKEN
+# Forward slashes inside double quotes also work.
+
+[chrome]
+cdp_url = "http://127.0.0.1:9222"
+ttp_domain = ""                     # host shown in the address bar when logged in to TTP (no https://, no path)
+
+[vault]
+root = ''                           # Obsidian vault root, Windows path (single quotes)
+name = ''                           # vault name as Obsidian shows it; used for obsidian:// links in Excel. Usually the root folder's name.
+gmat_folder = ''                    # existing GMAT folder inside the vault, relative to root (read-only inventory only), e.g. 'GMAT'
+export_folder = 'GMAT/TTP Export'   # NEW folder the tool creates inside the vault; nothing else in the vault is touched
+image_format = "png"                # png | webp | jpg   (webp/jpg shrink Obsidian Sync usage)
+image_quality = 85
+
+[pacing]
+min_wait = 4.0
+max_wait = 9.0
+max_pages_default = 250
