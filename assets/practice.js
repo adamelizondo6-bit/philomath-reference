@@ -389,7 +389,7 @@ P.ext.related = function (realm, sec, pageId) {
   if (g) links.push(h('a.chip', { href: '#/must/g/' + g.id }, '✓ Must-knows: ' + g.title));
   if (g) links.push(h('a.chip', { href: '#/must/quiz/' + g.id }, 'Quiz ' + g.id));
   if (realm === 'num') DR.forEach(function (d) { if (d.sec === sec.id) links.push(h('a.chip', { href: '#/practice/drill/' + d.id }, '▶ Drill: ' + d.title)); });
-  SETS.forEach(function (s) { if (s.realm === realm && (!s.sec || s.sec === sec.id || realm !== 'num')) links.push(h('a.chip', { href: '#/practice/set/' + s.id }, '▶ ' + s.title)); });
+  SETS.forEach(function (s) { if (s.realm === realm && (!s.sec || s.sec === sec.id || realm !== 'num')) links.push(h('a.chip', { href: '#/practice/set/' + s.id }, '▶ Set: ' + s.title)); });
   if (!links.length) return null;
   return h('div.related', [h('div.fsec', 'Practice this'), h('div.chips', links)]);
 };
