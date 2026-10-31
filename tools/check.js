@@ -45,18 +45,41 @@ sets.forEach(function (s) {
     if (!linkOk(q.l)) err(q.id + ': bad link ' + q.l);
   });
 });
-/* drills */
-var D = load('drills.js').DRILLS, dids = {};
+/* drills and grids: generate with default settings and with random settings */
+var DW = load('drills.js'), D = DW.DRILLS, G = DW.GRIDS, U = DW.DRILL_UTIL, dids = {};
+function resolve(def, random) {
+  var s = {};
+  def.opts.forEach(function (o) {
+    if (o.type === 'multi') { var v = o.def.slice(); if (random) { v = o.values.filter(function () { return Math.random() < 0.5; }); if (!v.length && !o.any) v = [o.values[Math.floor(Math.random() * o.values.length)]]; } s[o.key] = v; }
+    else s[o.key] = random ? o.values[Math.floor(Math.random() * o.values.length)] : o.def;
+  });
+  return s;
+}
+function badText(t) { return /NaN|undefined|Infinity/.test(t); }
 D.forEach(function (d) {
   if (dids[d.id]) err('duplicate drill id ' + d.id); dids[d.id] = true;
-  for (var i = 0; i < 300; i++) {
-    var q = d.gen();
-    var ok = q && typeof q.q === 'string' && q.choices && q.choices.length === 4 && new Set(q.choices).size === 4 && q.ans >= 0 && q.ans < 4 && typeof q.exp === 'string' && !/NaN|undefined|Infinity/.test(q.q + q.choices.join() + q.exp);
-    if (!ok) { err('drill ' + d.id + ' produced a bad question: ' + JSON.stringify(q)); break; }
+  if (!d.title || !d.sec || !Array.isArray(d.opts)) err('drill ' + d.id + ': missing title/sec/opts');
+  for (var i = 0; i < 400; i++) {
+    var s = resolve(d, i > 0), q;
+    try { q = d.gen(s); } catch (e) { err('drill ' + d.id + ' threw with ' + JSON.stringify(s) + ': ' + e.message); break; }
+    var ok;
+    if (q && q.kind === 'num') {
+      ok = typeof q.q === 'string' && typeof q.ans === 'number' && isFinite(q.ans) && typeof q.exp === 'string' && !badText(q.q + q.exp);
+      if (ok) { var m = U.toChoice(q); ok = m.choices.length === 4 && new Set(m.choices).size === 4 && m.ans >= 0 && m.ans < 4 && !badText(m.choices.join()); }
+    } else ok = q && q.kind === 'mc' && q.choices.length === 4 && new Set(q.choices).size === 4 && q.ans >= 0 && q.ans < 4 && !badText(q.q + q.choices.join() + q.exp);
+    if (!ok) { err('drill ' + d.id + ' produced a bad question with ' + JSON.stringify(s) + ': ' + JSON.stringify(q).slice(0, 200)); break; }
+  }
+});
+G.forEach(function (g) {
+  if (dids[g.id]) err('duplicate grid id ' + g.id); dids[g.id] = true;
+  for (var i = 0; i < 100; i++) {
+    var s = resolve(g, i > 0), q = g.gen(s);
+    var ok = q.cells.length > 0 && q.cols > 0 && (q.mode === 'select' ? q.targets > 0 && q.cells.filter(function (c) { return c.target; }).length === q.targets : q.cells.filter(function (c) { return 'ans' in c; }).length === q.targets);
+    if (!ok) { err('grid ' + g.id + ' produced a bad grid with ' + JSON.stringify(s)); break; }
   }
 });
 console.log('must-knows: ' + mk.items.length + ' items in ' + mk.groups.length + ' groups');
 console.log('questions: ' + total + ' in ' + sets.length + ' sets');
-console.log('drills: ' + D.length);
+console.log('drills: ' + D.length + ' \u00b7 grids: ' + G.length);
 if (errors.length) { console.log('\nERRORS (' + errors.length + '):'); errors.forEach(function (e) { console.log(' - ' + e); }); process.exit(1); }
 console.log('All checks passed.');

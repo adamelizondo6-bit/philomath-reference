@@ -1,7 +1,7 @@
 /* Philomath Reference service worker.
    Strategy: network first, cache fallback. Online you always get the newest files; offline you get
    the last copy that loaded. Bump VERSION whenever files change so old caches are dropped. */
-var VERSION = '2026-10-31.1';
+var VERSION = '2026-10-31.2';
 var CACHE = 'pmref-' + VERSION;
 var PRECACHE = [
   './', './index.html', './manifest.webmanifest',

@@ -12,7 +12,7 @@ and question sets. It is plain HTML, CSS and JavaScript with no build step, serv
 | `assets/app.css` | All styles. Dark mode is `html[data-theme="dark"]`, chosen from the saved preference or the system setting. |
 | `assets/app.js` | Router, side navigation (built from the sections index), home, section, page and formula views, search, theme and the shared progress store (`localStorage` key `pmref.v1`). |
 | `assets/mustknows.js` | The must-know items, grouped by section letter. |
-| `assets/drills.js` | Speed-drill generators. Every answer is computed, so keys cannot be wrong. |
+| `assets/drills.js` | Drill generators and grid games. Every answer is computed, so keys cannot be wrong. Each drill declares `opts` (round length, typed vs multiple choice, ranges, question kinds) that the settings page renders. |
 | `assets/questions.js` | Problem-solving and data-sufficiency question sets. |
 | `assets/questions-verbal.js` | Critical-reasoning and reading-comprehension question sets. |
 | `assets/practice.js` | The must-knows and practice screens and the shared round player (choices, feedback, explanations, stars, review of misses, progress). |
@@ -23,8 +23,8 @@ and question sets. It is plain HTML, CSS and JavaScript with no build step, serv
 
 `#/` home · `#/sec/num/A` section · `#/num/remainders` page · `#/formulas` and `#/formulas/<slug>` ·
 `#/must`, `#/must/g/<group>`, `#/must/cards/<scope>`, `#/must/quiz/<scope>` (scope is a group letter,
-`all` or `weak`) · `#/practice`, `#/practice/drill/<id>`, `#/practice/set/<id>`, `#/practice/mixed`,
-`#/practice/missed` · `#/about`.
+`all` or `weak`) · `#/practice`, `#/practice/drill/<id>` (settings) and `#/practice/drill/<id>/play`, `#/practice/grid/<id>` and
+`#/practice/grid/<id>/play`, `#/practice/set/<id>`, `#/practice/mixed`, `#/practice/missed` · `#/about`.
 
 ## Adding content
 
@@ -52,9 +52,12 @@ reasoning and reading questions carry the argument or passage in `p`; consecutiv
 with the same `p` show the passage collapsed after the first one. Question ids must be unique across
 every set because they are used to remember misses.
 
-**A drill** is a `drill(id, title, subtitle, sectionLetter, generator)` call in `assets/drills.js`.
-The generator returns `{ q, choices, ans, exp, big }`; use the `mc()` helper so distractors are
-de-duplicated and padded.
+**A drill** is a `drill(id, title, subtitle, sectionLetter, opts, generator)` call in `assets/drills.js`.
+The generator receives the chosen settings and returns either `num(q, answer, distractors, explanation, {unit, neg, tol})`
+for a typed numeric answer (converted to multiple choice automatically when the player picks that mode) or
+`mc(q, correct, distractors, explanation)` for a choice-only question. Options come from `pickOpt`, `multiOpt`
+and `kindsOpt`; `N_OPT` and `MODE_OPT` are the shared round-length and answer-mode settings. A grid game is a
+`grid(...)` call returning `{ q, cols, mode: 'select' | 'fill', cells, targets, exp }`.
 
 After any change: `node tools/check.js`, then bump `VERSION` in `sw.js` so phones drop the old
 offline cache.

@@ -1,11 +1,11 @@
 /* Philomath Reference — must-knows and practice.
-   Registers the #/must and #/practice routes, the shared round player used by drills, question
-   sets and must-know quizzes, and the progress hooks the home page and content pages use. */
+   Registers the #/must and #/practice routes, the drill settings pages, the shared round player
+   (multiple choice and typed answers), the grid games, and the progress hooks used elsewhere. */
 (function () {
 'use strict';
 var P = window.PM, h = P.h, store = P.store, save = P.save, shuffle = P.shuffle;
 var MK = window.MUSTKNOWS || { groups: [], items: [] };
-var DR = window.DRILLS || [];
+var DR = window.DRILLS || [], GR = window.GRIDS || [], U = window.DRILL_UTIL;
 var SETS = (window.QBANK && window.QBANK.sets) || [];
 var LETTERS = 'ABCDE';
 var DS_CHOICES = [
@@ -44,9 +44,7 @@ function stats(items) {
   return s;
 }
 function isWeak(i) { var r = mustRec(i.id); return !!(r && r.seen && r.box <= 1); }
-function weakFirst(items) {
-  return shuffle(items.slice()).sort(function (a, b) { return boxOf(a.id) - boxOf(b.id); });
-}
+function weakFirst(items) { return shuffle(items.slice()).sort(function (a, b) { return boxOf(a.id) - boxOf(b.id); }); }
 function scopeItems(scope) {
   if (scope === 'all') return MK.items.slice();
   if (scope === 'weak') { var w = MK.items.filter(isWeak); return w.length >= 4 ? w : w.concat(MK.items.filter(function (i) { return !isWeak(i) && !mustRec(i.id); })); }
@@ -55,6 +53,7 @@ function scopeItems(scope) {
 function scopeTitle(scope) { if (scope === 'all') return 'All must-knows'; if (scope === 'weak') return 'Weak spots'; var g = groupOf(scope); return g ? g.title : 'Must-knows'; }
 function setById(id) { for (var i = 0; i < SETS.length; i++) if (SETS[i].id === id) return SETS[i]; return null; }
 function drillById(id) { for (var i = 0; i < DR.length; i++) if (DR[i].id === id) return DR[i]; return null; }
+function gridById(id) { for (var i = 0; i < GR.length; i++) if (GR[i].id === id) return GR[i]; return null; }
 function allQuestions(filter) {
   var out = [];
   SETS.forEach(function (s) { s.questions.forEach(function (q) { if (!filter || filter(s, q)) out.push(toItem(s, q)); }); });
@@ -72,7 +71,91 @@ function linkTitle(l) {
 }
 function starsBig(n) { var s = h('div.stars'); for (var i = 0; i < 3; i++) s.appendChild(h(i < n ? 'span' : 'span.off', '★')); return s; }
 function bar(frac) { return h('div.bar', h('i', { style: 'width:' + Math.round(Math.max(0, Math.min(1, frac)) * 100) + '%' })); }
+function parseNumber(str) {
+  var s = String(str).replace(/[,\s$%]/g, '').replace(/[−–]/g, '-');
+  if (!s) return null;
+  var m = s.match(/^(-?)(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)$/), v;
+  if (m) v = (m[1] ? -1 : 1) * parseFloat(m[2]) / parseFloat(m[3]); else { if (!/^-?\d*\.?\d+$/.test(s)) return null; v = parseFloat(s); }
+  return isFinite(v) ? v : null;
+}
+function typedOk(v, it) { var tol = Math.max(it.tol || 0, 1e-9 * Math.max(1, Math.abs(it.ans))); return Math.abs(v - it.ans) <= tol + 1e-12; }
+
+/* ---------- drill settings ---------- */
+function settingsFor(def) {
+  var saved = P.bucket('dopts')[def.id] || {}, s = {};
+  def.opts.forEach(function (o) {
+    var v = saved[o.key];
+    if (o.type === 'multi') {
+      var arr = Array.isArray(v) ? v.filter(function (x) { return o.values.indexOf(x) >= 0; }) : o.def.slice();
+      if (!arr.length && !o.any) arr = o.def.slice();
+      s[o.key] = arr;
+    } else s[o.key] = o.values.indexOf(v) >= 0 ? v : o.def;
+  });
+  return s;
+}
+function saveSetting(def, key, val) { var b = P.bucket('dopts'); if (!b[def.id]) b[def.id] = {}; b[def.id][key] = val; save(); }
+function recLine(rec) { return rec ? h('div.sub', [P.stars(rec.stars), ' best ' + rec.best + '/' + rec.total + ' · ' + rec.plays + ' play' + (rec.plays === 1 ? '' : 's')]) : h('div.sub', 'Not played yet'); }
+function settingsPage(def, playHref, note) {
+  var s = settingsFor(def);
+  var pg = h('div.pg.pg-prac', [h('div.crumb', [h('a', { href: '#/practice' }, 'Practice')]), h('h1', def.title), h('p.intro', def.sub), recLine(roundRec('drills', def.id))]);
+  if (note) pg.appendChild(h('div.settings-note', note));
+  def.opts.forEach(function (o) {
+    var row = h('div.optrow', [h('div.lab', o.label)]), chips = h('div.chips'), btns = [];
+    function paint() {
+      btns.forEach(function (b) { var v = b.val; var on = v === null ? !s[o.key].length : (o.type === 'multi' ? s[o.key].indexOf(v) >= 0 : s[o.key] === v); b.el.classList.toggle('on', on); });
+    }
+    o.values.forEach(function (v, i) {
+      var lab = o.labels ? o.labels[i] : String(v);
+      var el = h('button.chip' + (typeof v === 'number' && !o.labels ? '.num' : ''), { type: 'button' }, lab);
+      el.addEventListener('click', function () {
+        if (o.type === 'multi') { var arr = s[o.key].slice(), ix = arr.indexOf(v); if (ix >= 0) arr.splice(ix, 1); else arr.push(v); if (!arr.length && !o.any) return; arr.sort(function (a, b) { return o.values.indexOf(a) - o.values.indexOf(b); }); s[o.key] = arr; saveSetting(def, o.key, arr); }
+        else { s[o.key] = v; saveSetting(def, o.key, v); }
+        paint();
+      });
+      btns.push({ el: el, val: v }); chips.appendChild(el);
+    });
+    if (o.type === 'multi' && o.any) {
+      var anyEl = h('button.chip', { type: 'button' }, 'Any');
+      anyEl.addEventListener('click', function () { s[o.key] = []; saveSetting(def, o.key, []); paint(); });
+      btns.push({ el: anyEl, val: null }); chips.appendChild(anyEl);
+    }
+    if (o.type === 'multi' && !o.any && o.values.length > 4) {
+      var allEl = h('button.chip', { type: 'button' }, 'All');
+      allEl.addEventListener('click', function () { s[o.key] = o.values.slice(); saveSetting(def, o.key, s[o.key]); paint(); });
+      btns.push({ el: allEl, val: undefined }); chips.appendChild(allEl);
+    }
+    paint();
+    row.appendChild(chips); pg.appendChild(row);
+  });
+  pg.appendChild(h('div.startbar', h('a.btn.primary.block', { href: playHref }, 'Start')));
+  P.mount(pg, def.title);
+}
+
+/* ---------- building rounds ---------- */
+function fromRaw(raw, s) {
+  if (raw.kind === 'num') {
+    var bigN = !!raw.big && raw.q.length <= 30;
+    if (s.mode === 'choice') { var m = U.toChoice(raw); return { q: m.q, c: m.choices, a: m.ans, e: m.exp, big: bigN, l: null }; }
+    return { type: 'num', q: raw.q, ans: raw.ans, unit: raw.unit, neg: raw.neg, tol: raw.tol, e: raw.exp, big: bigN, l: null, ansText: U.display(raw, raw.ans) };
+  }
+  return { q: raw.q, c: raw.choices, a: raw.ans, e: raw.exp, big: !!raw.big && raw.q.length <= 30, l: null };
+}
+function genRound(def, s) {
+  var n = s.n || 10, items = [], seen = {}, tries = 0;
+  while (items.length < n && tries++ < n * 12) {
+    var raw = def.gen(s);
+    if (!raw || seen[raw.q]) continue;
+    seen[raw.q] = true;
+    items.push(fromRaw(raw, s));
+  }
+  return items;
+}
 function mustQuizItem(it) {
+  var typed = store.mustTyped !== false, a = String(it.a);
+  if (typed && /^\$?[\d,]+(\.\d+)?%?$/.test(a)) {
+    var unit = a.charAt(0) === '$' ? '$' : a.slice(-1) === '%' ? '%' : '', v = parseNumber(a), dec = /\.\d/.test(a);
+    return { type: 'num', id: it.id, mk: it.id, q: it.q, ans: v, unit: unit, neg: false, tol: dec ? (unit === '%' ? 0.05 : 0.006) : 0, e: it.n || '', l: it.l, big: it.q.length <= 30, ansText: a };
+  }
   var ds = [];
   if (it.alts && it.alts.length >= 3) ds = shuffle(it.alts.slice()).slice(0, 3);
   else {
@@ -80,83 +163,111 @@ function mustQuizItem(it) {
     if (pool.length < 3) pool = pool.concat(MK.items.filter(function (x) { return x.id !== it.id && x.g === it.g; }).map(function (x) { return x.a; }));
     if (pool.length < 3) pool = pool.concat(MK.items.filter(function (x) { return x.g !== it.g; }).map(function (x) { return x.a; }));
     var seen = {}; seen[it.a] = true;
-    shuffle(pool).forEach(function (a) { if (ds.length < 3 && !seen[a]) { seen[a] = true; ds.push(a); } });
+    shuffle(pool).forEach(function (x) { if (ds.length < 3 && !seen[x]) { seen[x] = true; ds.push(x); } });
   }
   var choices = shuffle([it.a].concat(ds));
   return { id: it.id, mk: it.id, q: it.q, c: choices, a: choices.indexOf(it.a), e: it.n || '', l: it.l, big: false };
 }
-function genRound(drill, n) {
-  var items = [], seen = {}, tries = 0;
-  while (items.length < n && tries++ < 80) {
-    var q = drill.gen();
-    if (!q || seen[q.q]) continue;
-    seen[q.q] = true;
-    items.push({ q: q.q, c: q.choices, a: q.ans, e: q.exp, big: q.big, l: null });
-  }
-  return items;
-}
 
-/* ---------- the round player ---------- */
+/* ---------- the round player (multiple choice + typed answers) ---------- */
 function playRound(o) {
   var items = o.items, n = items.length, idx = 0, correct = 0, streak = 0, best = 0, misses = [], t0 = Date.now(), lastPassage = null;
+  var cur = null, answered = false, advanced = false, negOn = false;
   var root = h('div.pg.' + (o.cls || 'pg-prac'));
+  P.ext.lastRound = items;
   P.mount(root, o.title);
   if (!n) { root.appendChild(h('p.empty', 'Nothing to practice here yet.')); root.appendChild(h('a.btn', { href: o.back }, o.backLabel || 'Back')); return; }
+  var headBox = h('div'), prog = h('i'), passBox = h('div'), stemBox = h('div'), ansBox = h('div'), fbBox = h('div');
+  root.appendChild(h('div.round', [headBox, h('div.prog', prog), passBox, stemBox, ansBox, fbBox]));
+  /* typed-answer widgets are created once and reused, so the phone keyboard stays open between questions */
+  var tin = h('input.tin', { type: 'text', inputmode: 'decimal', autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false', enterkeyhint: 'go', 'aria-label': 'Your answer' });
+  var pre = h('span.unit'), suf = h('span.unit'), pm = h('button.pm', { type: 'button', 'aria-label': 'Make the answer negative' }, '±'), go = h('button.btn.primary.go', { type: 'button' }, 'Check');
+  var typedBox = h('div.typed', [pre, tin, suf, pm, go]);
+  var hint = h('div.thint', 'Type the answer, then press Check or Go. Commas and fractions like 17/2 are fine.');
+  pm.addEventListener('click', function () { negOn = !negOn; pm.classList.toggle('on', negOn); tin.focus(); });
+  go.addEventListener('click', function () { if (answered) advance(); else submitTyped(); });
+  tin.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); if (answered) advance(); else submitTyped(); } });
+  function onKey(ev) {
+    if (!document.body.contains(root)) { document.removeEventListener('keydown', onKey); return; }
+    if (ev.key === 'Enter' && answered && document.activeElement !== tin) { ev.preventDefault(); advance(); }
+  }
+  document.addEventListener('keydown', onKey);
   function head() {
-    return h('div.rhead', [
-      h('a', { href: o.back }, '← ' + (o.backLabel || 'Back')), h('span.spacer'),
-      h('span', (idx + 1) + ' / ' + n), h('span', '✓ ' + correct),
-      streak >= 2 ? h('span.streak', '🔥 ' + streak) : null
-    ]);
+    return h('div.rhead', [h('a', { href: o.back }, '← ' + (o.backLabel || 'Back')), h('span.spacer'), h('span', (idx + 1) + ' / ' + n), h('span', '✓ ' + correct), streak >= 2 ? h('span.streak', '🔥 ' + streak) : null]);
   }
   function show() {
-    P.clear(root);
-    var it = items[idx], cur = idx, advanced = false, done = false;
-    var box = h('div.round', [head(), h('div.prog', h('i', { style: 'width:' + Math.round(idx / n * 100) + '%' }))]);
+    cur = items[idx]; answered = false; advanced = false;
+    var it = cur;
+    P.clear(headBox); headBox.appendChild(head());
+    prog.style.width = Math.round(idx / n * 100) + '%';
+    P.clear(passBox);
     if (it.p) {
       var pass = h('div.passage', it.p);
       if (it.kind === 'rc' && it.p === lastPassage) {
         pass.classList.add('hidden');
         var tog = h('a.ptoggle', { href: '#' }, 'Show passage');
         tog.addEventListener('click', function (ev) { ev.preventDefault(); pass.classList.toggle('hidden'); tog.textContent = pass.classList.contains('hidden') ? 'Show passage' : 'Hide passage'; });
-        box.appendChild(tog);
+        passBox.appendChild(tog);
       }
-      box.appendChild(pass);
+      passBox.appendChild(pass);
       lastPassage = it.p;
     }
-    if (it.kind === 'ds') box.appendChild(h('div.ds-note', 'Data sufficiency: decide whether the statements give enough information to answer the question.'));
-    box.appendChild(h('div.stem' + (it.big ? '.big' : ''), it.q));
-    var choices = h('div.choices' + (it.big ? '.grid2' : '')), btns = [];
-    it.c.forEach(function (c, i) {
-      var b = h('button.choice', { type: 'button' }, [(o.letters && !it.big) ? h('span.lt', LETTERS[i]) : null, h('span', c)]);
-      b.addEventListener('click', function () { answer(i); });
-      btns.push(b); choices.appendChild(b);
-    });
-    box.appendChild(choices);
-    var fb = h('div');
-    box.appendChild(fb);
-    root.appendChild(box);
-    window.scrollTo(0, 0);
-    function answer(i) {
-      if (done) return; done = true;
-      var ok = i === it.a;
-      btns.forEach(function (b, j) { b.disabled = true; if (j === it.a) b.classList.add('correct'); if (j === i) b.classList.add(ok ? 'picked' : 'wrong'); });
-      if (ok) { correct++; streak++; if (streak > best) best = streak; } else { streak = 0; misses.push(it); }
-      if (o.onItem) o.onItem(it, ok);
-      var f = h('div.feedback.' + (ok ? 'ok' : 'bad'));
-      f.appendChild(h('b.v', ok ? ('Correct' + (streak >= 3 ? ' — ' + streak + ' in a row' : '')) : ('Not quite — the answer is ' + ((o.letters && !it.big) ? LETTERS[it.a] : it.c[it.a]))));
-      if (it.e) f.appendChild(h('div.exp', it.e));
-      if (it.l) f.appendChild(h('a.learn', { href: it.l }, 'Learn → ' + linkTitle(it.l)));
-      var next = h('button.btn.primary.block', { type: 'button', style: 'margin-top:12px' }, idx + 1 < n ? 'Next' : 'See results');
-      next.addEventListener('click', advance);
-      f.appendChild(next);
-      fb.appendChild(f);
-      if (ok && o.auto) setTimeout(function () { if (idx === cur) advance(); }, 650);
-      else setTimeout(function () { f.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, 30);
+    P.clear(stemBox);
+    if (it.kind === 'ds') stemBox.appendChild(h('div.ds-note', 'Data sufficiency: decide whether the statements give enough information to answer the question.'));
+    stemBox.appendChild(h('div.stem' + (it.big ? '.big' : ''), it.q));
+    P.clear(fbBox);
+    if (it.type === 'num') {
+      if (typedBox.parentNode !== ansBox) { P.clear(ansBox); ansBox.appendChild(typedBox); ansBox.appendChild(hint); }
+      pre.textContent = it.unit === '$' ? '$' : ''; suf.textContent = it.unit && it.unit !== '$' ? it.unit : '';
+      pm.classList.toggle('hidden', !it.neg); negOn = false; pm.classList.remove('on');
+      tin.value = ''; tin.classList.remove('ok', 'bad'); go.textContent = 'Check';
+      if (idx === 0) window.scrollTo(0, 0);
+      tin.focus();
+    } else {
+      P.clear(ansBox);
+      var choices = h('div.choices' + (it.big ? '.grid2' : '')), btns = [];
+      it.c.forEach(function (c, i) {
+        var b = h('button.choice', { type: 'button' }, [(o.letters && !it.big) ? h('span.lt', LETTERS[i]) : null, h('span', c)]);
+        b.addEventListener('click', function () {
+          if (answered) return;
+          var ok = i === it.a;
+          btns.forEach(function (bb, j) { bb.disabled = true; if (j === it.a) bb.classList.add('correct'); if (j === i) bb.classList.add(ok ? 'picked' : 'wrong'); });
+          finishAnswer(ok, (o.letters && !it.big) ? LETTERS[it.a] : it.c[it.a]);
+        });
+        btns.push(b); choices.appendChild(b);
+      });
+      ansBox.appendChild(choices);
+      window.scrollTo(0, 0);
     }
-    function advance() { if (advanced || idx !== cur) return; advanced = true; idx++; if (idx < n) show(); else finish(); }
   }
+  function submitTyped() {
+    var v = parseNumber(tin.value);
+    if (v == null) { tin.focus(); return; }
+    if (negOn) v = -Math.abs(v);
+    var ok = typedOk(v, cur);
+    tin.classList.add(ok ? 'ok' : 'bad'); go.textContent = 'Next';
+    finishAnswer(ok, cur.ansText);
+  }
+  function finishAnswer(ok, ansText) {
+    answered = true;
+    var it = cur, curIdx = idx;
+    if (ok) { correct++; streak++; if (streak > best) best = streak; } else { streak = 0; misses.push(it); }
+    if (o.onItem) o.onItem(it, ok);
+    P.clear(headBox); headBox.appendChild(head());
+    var f = h('div.feedback.' + (ok ? 'ok' : 'bad'));
+    f.appendChild(h('b.v', ok ? ('Correct' + (streak >= 3 ? ' — ' + streak + ' in a row' : '')) : ('Not quite — the answer is ' + ansText)));
+    if (it.e) f.appendChild(h('div.exp', it.e));
+    if (it.l) f.appendChild(h('a.learn', { href: it.l }, 'Learn → ' + linkTitle(it.l)));
+    var next = h('button.btn.primary.block', { type: 'button', style: 'margin-top:12px' }, idx + 1 < n ? 'Next' : 'See results');
+    next.addEventListener('click', advance);
+    f.appendChild(next);
+    fbBox.appendChild(f);
+    if (ok && o.auto) setTimeout(function () { if (idx === curIdx && answered) advance(); }, 650);
+    else setTimeout(function () { f.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, 30);
+  }
+  function advance() { if (!answered || advanced) return; advanced = true; idx++; if (idx < n) show(); else finish(); }
   function finish() {
+    document.removeEventListener('keydown', onKey);
     var secs = Math.round((Date.now() - t0) / 1000), st = starsFor(correct, n);
     var rec = o.onDone ? o.onDone(correct, n, st) : null;
     P.clear(root);
@@ -168,12 +279,14 @@ function playRound(o) {
     if (rec && rec.best != null) res.appendChild(h('div.muted.small', 'Best so far: ' + rec.best + ' / ' + rec.total + ' · ' + rec.plays + ' play' + (rec.plays === 1 ? '' : 's')));
     var row = h('div.btnrow', { style: 'justify-content:center' });
     if (o.again) row.appendChild(h('button.btn.primary', { type: 'button', on: { click: o.again } }, o.againLabel || 'Play again'));
+    if (o.settings) row.appendChild(h('a.btn', { href: o.settings }, 'Settings'));
     var list = h('div.hidden');
     if (misses.length) {
       var mb = h('button.btn', { type: 'button' }, 'Review misses (' + misses.length + ')');
       mb.addEventListener('click', function () { list.classList.toggle('hidden'); });
       misses.forEach(function (m) {
-        list.appendChild(h('div.miss', [h('div.q', m.q), h('div.a', 'Answer: ' + ((o.letters && !m.big) ? LETTERS[m.a] + ' — ' : '') + m.c[m.a]), m.e ? h('div.small.muted', m.e) : null, m.l ? h('a.learn.small', { href: m.l }, 'Learn → ' + linkTitle(m.l)) : null]));
+        var ansText = m.type === 'num' ? m.ansText : ((o.letters && !m.big) ? LETTERS[m.a] + ' — ' : '') + m.c[m.a];
+        list.appendChild(h('div.miss', [h('div.q', m.q), h('div.a', 'Answer: ' + ansText), m.e ? h('div.small.muted', m.e) : null, m.l ? h('a.learn.small', { href: m.l }, 'Learn → ' + linkTitle(m.l)) : null]));
       });
       row.appendChild(mb);
     }
@@ -185,31 +298,83 @@ function playRound(o) {
   show();
 }
 
+/* ---------- grid games ---------- */
+function playGrid(def) {
+  var s = settingsFor(def), g = def.gen(s), checked = false, inputs = [], cellEls = [];
+  var root = h('div.pg.pg-prac'); P.mount(root, def.title);
+  var wrap = h('div.round', [h('div.rhead', [h('a', { href: '#/practice/grid/' + def.id }, '← ' + def.title), h('span.spacer'), h('span', g.targets + ' to find')]), h('div.stem', g.q)]);
+  var gridEl = h('div.ggrid', { style: 'grid-template-columns:repeat(' + g.cols + ',1fr)' });
+  g.cells.forEach(function (c) {
+    var el;
+    if (c.head) el = h('div.gcell.head', c.show);
+    else if (g.mode === 'select') { el = h('button.gcell', { type: 'button' }, c.show); el.addEventListener('click', function () { if (!checked) el.classList.toggle('sel'); }); }
+    else {
+      var inp = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'off', 'aria-label': 'cell' });
+      inp.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); var k = inputs.indexOf(inp); if (k + 1 < inputs.length) inputs[k + 1].focus(); else check(); } });
+      inputs.push(inp); el = h('div.gcell.fill', inp);
+    }
+    cellEls.push(el); gridEl.appendChild(el);
+  });
+  wrap.appendChild(gridEl);
+  wrap.appendChild(h('div.glegend', g.mode === 'select' ? 'Tap a number to mark it; tap again to unmark. Then press Check.' : 'Type each product, then press Check. Enter jumps to the next cell.'));
+  var checkBtn = h('button.btn.primary.block', { type: 'button' }, 'Check');
+  checkBtn.addEventListener('click', check);
+  wrap.appendChild(checkBtn);
+  var resBox = h('div'); wrap.appendChild(resBox);
+  root.appendChild(wrap);
+  if (inputs.length) setTimeout(function () { inputs[0].focus(); }, 50);
+  function check() {
+    if (checked) return; checked = true;
+    var hits = 0, wrong = 0, missed = 0, total = g.targets;
+    g.cells.forEach(function (c, i) {
+      var el = cellEls[i]; if (c.head) return;
+      if (g.mode === 'select') {
+        var sel = el.classList.contains('sel'); el.classList.remove('sel'); el.disabled = true;
+        if (c.target && sel) { hits++; el.classList.add('hit'); } else if (c.target) { missed++; el.classList.add('miss'); } else if (sel) { wrong++; el.classList.add('wrong'); }
+      } else {
+        var inp = el.firstChild, v = parseNumber(inp.value); inp.readOnly = true;
+        if (v !== null && v === c.ans) { hits++; el.classList.add('ok'); } else { wrong++; el.classList.add('bad'); el.appendChild(h('div.want', String(c.ans))); }
+      }
+    });
+    var score = Math.max(0, hits - (g.mode === 'select' ? wrong : 0)), st = starsFor(score, total);
+    var rec = recordRound('drills', def.id, score, total);
+    checkBtn.classList.add('hidden');
+    var res = h('div.result', [starsBig(st), h('div.score', hits + ' / ' + total), h('div.gscore', g.mode === 'select' ? (missed + ' missed · ' + wrong + ' wrong tap' + (wrong === 1 ? '' : 's')) : (wrong + ' wrong')), h('div.small.muted', { style: 'text-align:left;white-space:pre-line' }, g.exp)]);
+    if (rec) res.appendChild(h('div.muted.small', 'Best so far: ' + rec.best + ' / ' + rec.total + ' · ' + rec.plays + ' play' + (rec.plays === 1 ? '' : 's')));
+    res.appendChild(h('div.btnrow', { style: 'justify-content:center' }, [h('button.btn.primary', { type: 'button', on: { click: P.render } }, 'New grid'), h('a.btn', { href: '#/practice/grid/' + def.id }, 'Settings'), h('a.btn', { href: '#/practice' }, 'Practice')]));
+    resBox.appendChild(res);
+    setTimeout(function () { res.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, 30);
+  }
+}
+
 /* ---------- must-knows: hub ---------- */
 P.route(/^#\/must$/, function () {
-  var all = stats(MK.items), weak = MK.items.filter(isWeak).length;
+  var all = stats(MK.items), weak = MK.items.filter(isWeak).length, typed = store.mustTyped !== false;
   var pg = h('div.pg.pg-must', [
     h('h1', 'Must-knows'),
-    h('p.intro', MK.items.length + ' facts, rules and tables to have cold on test day — pulled from the reference pages. Tap a group to browse, or test yourself with cards (self-graded) or a quiz (multiple choice). Weak items come back first.'),
+    h('p.intro', MK.items.length + ' facts, rules and tables to have cold on test day — pulled from the reference pages. Tap a group to browse, or test yourself with cards (self-graded) or a quiz. Weak items come back first.'),
     h('div.flex', [h('b', all.known + ' known'), h('span.muted', '· ' + all.learning + ' learning · ' + weak + ' weak · ' + all.fresh + ' not seen')]),
     bar(all.known / Math.max(1, all.n)),
     h('div.btnrow', [
       h('a.btn.primary', { href: '#/must/quiz/weak' }, weak >= 4 ? 'Quiz my weak spots (' + weak + ')' : 'Quiz: weak spots & new'),
       h('a.btn', { href: '#/must/quiz/all' }, 'Random quiz'),
       h('a.btn', { href: '#/must/cards/all' }, 'Random cards')
-    ])
+    ]),
+    h('div.optrow', [h('div.lab', 'Number answers in quizzes'), h('div.chips', [
+      h('button.chip' + (typed ? '.on' : ''), { type: 'button', on: { click: function () { store.mustTyped = true; save(); P.render(); } } }, 'Type them in'),
+      h('button.chip' + (!typed ? '.on' : ''), { type: 'button', on: { click: function () { store.mustTyped = false; save(); P.render(); } } }, 'Multiple choice')
+    ])])
   ]);
   var realm = '';
   MK.groups.forEach(function (g) {
     var label = g.realm === 'num' ? 'Math' : g.realm === 'lin' ? 'Verbal · Reading' : 'Verbal · Reasoning';
     if (label !== realm) { realm = label; pg.appendChild(h('div.fsec', label)); }
     var s = stats(groupItems(g.id));
-    var t = h('div.tile', { style: 'margin-top:10px' }, [
+    pg.appendChild(h('div.tile', { style: 'margin-top:10px' }, [
       h('a', { href: '#/must/g/' + g.id, style: 'text-decoration:none;color:inherit;display:block' }, [h('b', g.id + ' · ' + g.title), h('div.sub', s.n + ' items · ' + s.known + ' known' + (s.weak ? ' · ' + s.weak + ' weak' : ''))]),
       bar(s.known / Math.max(1, s.n)),
       h('div.flex', [h('a.btn.sm', { href: '#/must/g/' + g.id }, 'Browse'), h('a.btn.sm', { href: '#/must/cards/' + g.id }, 'Cards'), h('a.btn.sm.primary', { href: '#/must/quiz/' + g.id }, 'Quiz')])
-    ]);
-    pg.appendChild(t);
+    ]));
   });
   P.mount(pg, 'Must-knows');
 });
@@ -223,7 +388,7 @@ P.route(/^#\/must\/g\/([A-Z])(?:\/([A-Z0-9]+))?$/, function (gid, open) {
     h('h1', g.id + ' · ' + g.title),
     h('div.muted.small', s.n + ' items · ' + s.known + ' known · ' + s.learning + ' learning · ' + s.weak + ' weak · ' + s.fresh + ' not seen'),
     bar(s.known / Math.max(1, s.n)),
-    h('div.btnrow', [h('a.btn', { href: '#/must/cards/' + gid }, 'Cards'), h('a.btn.primary', { href: '#/must/quiz/' + gid }, 'Quiz'), h('button.btn.ghost', { type: 'button', on: { click: function () { var all = pg.querySelectorAll('.mk'); var anyClosed = false; for (var i = 0; i < all.length; i++) if (!all[i].classList.contains('open')) anyClosed = true; for (var j = 0; j < all.length; j++) all[j].classList.toggle('open', anyClosed); } } }, 'Show / hide all')]),
+    h('div.btnrow', [h('a.btn', { href: '#/must/cards/' + gid }, 'Cards'), h('a.btn.primary', { href: '#/must/quiz/' + gid }, 'Quiz'), h('button.btn.ghost', { type: 'button', on: { click: function () { var all = pg.querySelectorAll('.mk'), anyClosed = false, i; for (i = 0; i < all.length; i++) if (!all[i].classList.contains('open')) anyClosed = true; for (i = 0; i < all.length; i++) all[i].classList.toggle('open', anyClosed); } } }, 'Show / hide all')]),
     h('div.note', 'Tap an item to reveal the answer.')
   ]);
   var target = null;
@@ -246,8 +411,7 @@ P.route(/^#\/must\/g\/([A-Z])(?:\/([A-Z0-9]+))?$/, function (gid, open) {
 P.route(/^#\/must\/cards\/([A-Za-z]+)$/, function (scope) {
   var pool = scopeItems(scope); if (!pool.length) return false;
   var items = weakFirst(pool).slice(0, 20), idx = 0, got = 0, missed = [];
-  var title = 'Cards · ' + scopeTitle(scope);
-  var root = h('div.pg.pg-must');
+  var title = 'Cards · ' + scopeTitle(scope), root = h('div.pg.pg-must');
   P.mount(root, title);
   function show() {
     P.clear(root);
@@ -273,8 +437,7 @@ P.route(/^#\/must\/cards\/([A-Za-z]+)$/, function (scope) {
     P.clear(root);
     var st = starsFor(got, items.length);
     var res = h('div.result', [starsBig(st), h('div.score', got + ' / ' + items.length), h('div.muted', 'Items you missed come back first next time.')]);
-    var row = h('div.btnrow', { style: 'justify-content:center' }, [h('button.btn.primary', { type: 'button', on: { click: P.render } }, 'Again'), h('a.btn', { href: '#/must/quiz/' + scope }, 'Quiz these'), h('a.btn', { href: '#/must' }, 'Must-knows')]);
-    res.appendChild(row);
+    res.appendChild(h('div.btnrow', { style: 'justify-content:center' }, [h('button.btn.primary', { type: 'button', on: { click: P.render } }, 'Again'), h('a.btn', { href: '#/must/quiz/' + scope }, 'Quiz these'), h('a.btn', { href: '#/must' }, 'Must-knows')]));
     if (missed.length) { var list = h('div', { style: 'margin-top:12px' }); missed.forEach(function (m) { list.appendChild(h('div.miss', [h('div.q', m.q), h('div.a', m.a), m.l ? h('a.learn.small', { href: m.l }, 'Learn →') : null])); }); res.appendChild(list); }
     root.appendChild(h('div.round', [h('div.rhead', [h('a', { href: '#/must' }, '← Must-knows'), h('span.spacer'), h('span', title)]), res]));
     window.scrollTo(0, 0);
@@ -295,10 +458,9 @@ P.route(/^#\/must\/quiz\/([A-Za-z]+)$/, function (scope) {
 });
 
 /* ---------- practice: hub ---------- */
-function setRecLine(rec) { return rec ? h('div.sub', [P.stars(rec.stars), ' best ' + rec.best + '/' + rec.total + ' · ' + rec.plays + ' play' + (rec.plays === 1 ? '' : 's')]) : h('div.sub', 'Not played yet'); }
 function totalStars() {
   var earned = 0, possible = 0;
-  DR.forEach(function (d) { possible += 3; var r = roundRec('drills', d.id); if (r) earned += r.stars || 0; });
+  DR.concat(GR).forEach(function (d) { possible += 3; var r = roundRec('drills', d.id); if (r) earned += r.stars || 0; });
   SETS.forEach(function (s) { possible += 3; var r = roundRec('sets', s.id); if (r) earned += r.stars || 0; });
   return { earned: earned, possible: possible };
 }
@@ -306,56 +468,64 @@ P.route(/^#\/practice$/, function () {
   var ts = totalStars(), missedIds = Object.keys(P.bucket('missed'));
   var pg = h('div.pg.pg-prac', [
     h('h1', 'Practice'),
-    h('p.intro', 'Speed drills are generated fresh every round. Question sets are GMAT-style problems with full explanations and a link back to the page that teaches each one. Three stars is 90% or better.'),
+    h('p.intro', 'Drills are generated fresh every round and you type the answers (or switch any drill to multiple choice in its settings). Grid games test a whole block at once. Question sets are GMAT-style problems with full explanations. Three stars is 90% or better.'),
     h('div.flex', [h('b', '★ ' + ts.earned + ' of ' + ts.possible + ' stars')]),
     bar(ts.earned / Math.max(1, ts.possible)),
     h('div.btnrow', [h('a.btn.primary', { href: '#/practice/mixed' }, 'Mixed set · 10 random'), h('a.btn', { href: '#/practice/missed' }, 'Retry missed (' + missedIds.length + ')')])
   ]);
-  pg.appendChild(h('div.fsec', 'Speed drills · 10 questions a round'));
+  pg.appendChild(h('div.fsec', 'Drills · tap one to set it up'));
   var grid = h('div.tiles');
-  DR.forEach(function (d) {
-    var r = roundRec('drills', d.id);
-    grid.appendChild(h('a.tile', { href: '#/practice/drill/' + d.id }, [h('b', d.title), h('div.sub', d.sub), setRecLine(r)]));
-  });
+  DR.forEach(function (d) { grid.appendChild(h('a.tile', { href: '#/practice/drill/' + d.id }, [h('b', d.title), h('div.sub', d.sub), recLine(roundRec('drills', d.id))])); });
   pg.appendChild(grid);
+  pg.appendChild(h('div.fsec', 'Grid games'));
+  var g2 = h('div.tiles');
+  GR.forEach(function (d) { g2.appendChild(h('a.tile', { href: '#/practice/grid/' + d.id }, [h('b', d.title), h('div.sub', d.sub), recLine(roundRec('drills', d.id))])); });
+  pg.appendChild(g2);
   ['ps', 'ds', 'cr', 'rc'].forEach(function (kind) {
     var sets = SETS.filter(function (s) { return s.kind === kind; });
     if (!sets.length) return;
     pg.appendChild(h('div.fsec', KIND[kind]));
-    var g2 = h('div.tiles');
-    sets.forEach(function (s) {
-      var r = roundRec('sets', s.id);
-      g2.appendChild(h('a.tile', { href: '#/practice/set/' + s.id }, [h('b', s.title), h('div.sub', s.questions.length + ' questions' + (s.blurb ? ' · ' + s.blurb : '')), setRecLine(r)]));
-    });
-    pg.appendChild(g2);
+    var g3 = h('div.tiles');
+    sets.forEach(function (s) { g3.appendChild(h('a.tile', { href: '#/practice/set/' + s.id }, [h('b', s.title), h('div.sub', s.questions.length + ' questions' + (s.blurb ? ' · ' + s.blurb : '')), recLine(roundRec('sets', s.id))])); });
+    pg.appendChild(g3);
   });
   P.mount(pg, 'Practice');
 });
 
-/* ---------- practice: drill ---------- */
+/* ---------- practice: drills ---------- */
 P.route(/^#\/practice\/drill\/([a-z0-9-]+)$/, function (id) {
   var d = drillById(id); if (!d) return false;
+  settingsPage(d, '#/practice/drill/' + d.id + '/play', 'Settings are remembered on this device.');
+});
+P.route(/^#\/practice\/drill\/([a-z0-9-]+)\/play$/, function (id) {
+  var d = drillById(id); if (!d) return false;
+  var s = settingsFor(d);
   playRound({
-    title: d.title, back: '#/practice', backLabel: 'Practice', items: genRound(d, 10), letters: false, auto: true,
+    title: d.title, back: '#/practice', backLabel: 'Practice', settings: '#/practice/drill/' + d.id, items: genRound(d, s), letters: false, auto: true,
     onDone: function (c, n) { return recordRound('drills', d.id, c, n); }, again: P.render
   });
 });
+P.route(/^#\/practice\/grid\/([a-z0-9-]+)$/, function (id) {
+  var g = gridById(id); if (!g) return false;
+  settingsPage(g, '#/practice/grid/' + g.id + '/play', null);
+});
+P.route(/^#\/practice\/grid\/([a-z0-9-]+)\/play$/, function (id) {
+  var g = gridById(id); if (!g) return false;
+  playGrid(g);
+});
 
-/* ---------- practice: question set ---------- */
+/* ---------- practice: question sets ---------- */
 function markMissed(it, ok) {
-  if (!it.id) return;
+  if (!it.id || !it.set) return;
   var m = P.bucket('missed');
-  if (ok) delete m[it.id]; else m[it.id] = it.set || 1;
+  if (ok) delete m[it.id]; else m[it.id] = it.set;
   save();
 }
 P.route(/^#\/practice\/set\/([a-z0-9-]+)$/, function (id) {
   var s = setById(id); if (!s) return false;
   var items = s.questions.map(function (q) { return toItem(s, q); });
   if (s.kind !== 'rc') items = shuffle(items);
-  playRound({
-    title: s.title, back: '#/practice', backLabel: 'Practice', items: items, letters: true, auto: false,
-    onItem: markMissed, onDone: function (c, n) { return recordRound('sets', s.id, c, n); }, again: P.render
-  });
+  playRound({ title: s.title, back: '#/practice', backLabel: 'Practice', items: items, letters: true, auto: false, onItem: markMissed, onDone: function (c, n) { return recordRound('sets', s.id, c, n); }, again: P.render });
 });
 P.route(/^#\/practice\/mixed$/, function () {
   var items = shuffle(allQuestions(function (s) { return s.kind !== 'rc'; })).slice(0, 10);
@@ -373,22 +543,23 @@ P.route(/^#\/practice\/missed$/, function () {
 
 /* ---------- hooks used by the core app ---------- */
 var questionCount = 0; SETS.forEach(function (s) { questionCount += s.questions.length; });
-P.ext.counts = function () { return { must: MK.items.length, questions: questionCount, drills: DR.length }; };
+P.ext.counts = function () { return { must: MK.items.length, questions: questionCount, drills: DR.length + GR.length }; };
 P.ext.homeMust = function () { var s = stats(MK.items), w = MK.items.filter(isWeak).length; return s.known + ' of ' + s.n + ' known' + (w ? ' · ' + w + ' weak' : '') + ' · cards & quizzes'; };
-P.ext.homePractice = function () { var t = totalStars(); return DR.length + ' drills · ' + questionCount + ' questions · ★ ' + t.earned + '/' + t.possible; };
+P.ext.homePractice = function () { var t = totalStars(); return DR.length + ' drills · ' + GR.length + ' grid games · ' + questionCount + ' questions · ★ ' + t.earned + '/' + t.possible; };
 P.ext.progressSummary = function () {
-  var s = stats(MK.items), t = totalStars(), plays = 0, b;
-  b = P.bucket('drills'); for (var k in b) if (b.hasOwnProperty(k)) plays += b[k].plays || 0;
-  b = P.bucket('sets'); for (var k2 in b) if (b.hasOwnProperty(k2)) plays += b[k2].plays || 0;
+  var s = stats(MK.items), t = totalStars(), plays = 0, b, k;
+  b = P.bucket('drills'); for (k in b) if (b.hasOwnProperty(k)) plays += b[k].plays || 0;
+  b = P.bucket('sets'); for (k in b) if (b.hasOwnProperty(k)) plays += b[k].plays || 0;
   return 'Saved on this device only: ' + s.known + ' of ' + s.n + ' must-knows known, ' + t.earned + ' of ' + t.possible + ' practice stars, ' + plays + ' rounds played, ' + Object.keys(P.bucket('missed')).length + ' questions waiting in "retry missed".';
 };
-P.ext.related = function (realm, sec, pageId) {
+P.ext.related = function (realm, sec) {
   if (!sec) return null;
-  var gid = realm === 'num' ? sec.id : REALM_GROUP[realm];
-  var g = groupOf(gid), links = [];
-  if (g) links.push(h('a.chip', { href: '#/must/g/' + g.id }, '✓ Must-knows: ' + g.title));
-  if (g) links.push(h('a.chip', { href: '#/must/quiz/' + g.id }, 'Quiz ' + g.id));
-  if (realm === 'num') DR.forEach(function (d) { if (d.sec === sec.id) links.push(h('a.chip', { href: '#/practice/drill/' + d.id }, '▶ Drill: ' + d.title)); });
+  var gid = realm === 'num' ? sec.id : REALM_GROUP[realm], g = groupOf(gid), links = [];
+  if (g) { links.push(h('a.chip', { href: '#/must/g/' + g.id }, '✓ Must-knows: ' + g.title)); links.push(h('a.chip', { href: '#/must/quiz/' + g.id }, 'Quiz ' + g.id)); }
+  if (realm === 'num') {
+    DR.forEach(function (d) { if (d.sec === sec.id) links.push(h('a.chip', { href: '#/practice/drill/' + d.id }, '▶ Drill: ' + d.title)); });
+    GR.forEach(function (d) { if (d.sec === sec.id) links.push(h('a.chip', { href: '#/practice/grid/' + d.id }, '▦ Grid: ' + d.title)); });
+  }
   SETS.forEach(function (s) { if (s.realm === realm && (!s.sec || s.sec === sec.id || realm !== 'num')) links.push(h('a.chip', { href: '#/practice/set/' + s.id }, '▶ Set: ' + s.title)); });
   if (!links.length) return null;
   return h('div.related', [h('div.fsec', 'Practice this'), h('div.chips', links)]);
@@ -399,6 +570,7 @@ P.searchers.push(function (q) {
     var it = MK.items[i];
     if ((it.q + ' ' + it.a).toLowerCase().indexOf(q) >= 0) out.push({ href: '#/must/g/' + it.g + '/' + it.id, title: it.q, sub: 'Must-know · ' + it.a });
   }
+  for (var j = 0; j < DR.length && out.length < 16; j++) if ((DR[j].title + ' ' + DR[j].sub).toLowerCase().indexOf(q) >= 0) out.push({ href: '#/practice/drill/' + DR[j].id, title: DR[j].title, sub: 'Drill · ' + DR[j].sub });
   return out;
 });
 })();
