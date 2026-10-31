@@ -215,7 +215,7 @@ function dailyLine() { var d = dailyStats(); return h('div.daily', 'Today: ' + d
 function keypad(fn) {
   var el = h('div.keypad'), pm, enter;
   function key(label, cls, act) { var b = h('button' + (cls ? '.' + cls : ''), { type: 'button' }, label); b.addEventListener('click', act); el.appendChild(b); return b; }
-  [['7', '8', '9', 'back'], ['4', '5', '6', 'pm'], ['1', '2', '3', '.'], ['0', '/']].forEach(function (row) {
+  [['1', '2', '3', 'back'], ['4', '5', '6', 'pm'], ['7', '8', '9', '.'], ['0', '/']].forEach(function (row) {
     row.forEach(function (k) {
       if (k === 'back') key('⌫', null, function () { fn.back(); });
       else if (k === 'pm') pm = key('±', 'pmk', function () { fn.pm(); });
