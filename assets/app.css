@@ -282,3 +282,15 @@ nav#side a.sec-all{font-size:12.5px;color:var(--accent);padding-top:3px;padding-
 .gscore{font-size:15px;font-weight:700;margin:8px 0}
 .gcell.fill{flex-direction:column}
 .gcell.fill input{height:auto;flex:1}
+/* ---------- on-screen keypad ---------- */
+.keypad{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;max-width:380px;margin:10px auto 12px}
+.keypad button{height:54px;border-radius:12px;border:1px solid var(--border);background:var(--background-element);font-size:22px;font-weight:700;color:var(--text);cursor:pointer;padding:0;-webkit-user-select:none;user-select:none}
+.keypad button:active{background:var(--background-selected)}
+.keypad button.wide{grid-column:span 3}
+.keypad button.act{grid-column:span 4;background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-size:17px}
+.keypad button.dim{opacity:.3;pointer-events:none}
+.keypad button.pmk.on{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.tin.disp{min-height:58px;display:flex;align-items:center;justify-content:center;letter-spacing:.5px}
+.tin.disp.empty{color:var(--text-secondary)}
+.gcell.cur{box-shadow:0 0 0 2px var(--accent) inset;border-color:var(--accent)}
+.gcell .val{font-weight:700;min-height:1em}

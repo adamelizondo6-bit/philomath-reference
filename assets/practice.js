@@ -169,6 +169,24 @@ function mustQuizItem(it) {
   return { id: it.id, mk: it.id, q: it.q, c: choices, a: choices.indexOf(it.a), e: it.n || '', l: it.l, big: false };
 }
 
+/* ---------- on-screen keypad (no text box to tap into) ---------- */
+function keypad(fn) {
+  var el = h('div.keypad'), pm, enter;
+  function key(label, cls, act) { var b = h('button' + (cls ? '.' + cls : ''), { type: 'button' }, label); b.addEventListener('click', act); el.appendChild(b); return b; }
+  [['7', '8', '9', 'back'], ['4', '5', '6', 'pm'], ['1', '2', '3', '.'], ['0', '/']].forEach(function (row) {
+    row.forEach(function (k) {
+      if (k === 'back') key('\u232b', null, function () { fn.back(); });
+      else if (k === 'pm') pm = key('\u00b1', 'pmk', function () { fn.pm(); });
+      else if (k === '0') key('0', 'wide', function () { fn.digit('0'); });
+      else key(k, null, function () { fn.digit(k); });
+    });
+  });
+  enter = key('Check', 'act', function () { fn.enter(); });
+  el.press = function (k) { if (k === 'back') fn.back(); else if (k === 'pm') fn.pm(); else if (k === 'enter') fn.enter(); else fn.digit(k); };
+  el.pm = pm; el.enter = enter;
+  return el;
+}
+
 /* ---------- the round player (multiple choice + typed answers) ---------- */
 function playRound(o) {
   var items = o.items, n = items.length, idx = 0, correct = 0, streak = 0, best = 0, misses = [], t0 = Date.now(), lastPassage = null;
@@ -179,17 +197,28 @@ function playRound(o) {
   if (!n) { root.appendChild(h('p.empty', 'Nothing to practice here yet.')); root.appendChild(h('a.btn', { href: o.back }, o.backLabel || 'Back')); return; }
   var headBox = h('div'), prog = h('i'), passBox = h('div'), stemBox = h('div'), ansBox = h('div'), fbBox = h('div');
   root.appendChild(h('div.round', [headBox, h('div.prog', prog), passBox, stemBox, ansBox, fbBox]));
-  /* typed-answer widgets are created once and reused, so the phone keyboard stays open between questions */
-  var tin = h('input.tin', { type: 'text', inputmode: 'decimal', autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false', enterkeyhint: 'go', 'aria-label': 'Your answer' });
-  var pre = h('span.unit'), suf = h('span.unit'), pm = h('button.pm', { type: 'button', 'aria-label': 'Make the answer negative' }, '±'), go = h('button.btn.primary.go', { type: 'button' }, 'Check');
-  var typedBox = h('div.typed', [pre, tin, suf, pm, go]);
-  var hint = h('div.thint', 'Type the answer, then press Check or Go. Commas and fractions like 17/2 are fine.');
-  pm.addEventListener('click', function () { negOn = !negOn; pm.classList.toggle('on', negOn); tin.focus(); });
-  go.addEventListener('click', function () { if (answered) advance(); else submitTyped(); });
-  tin.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); if (answered) advance(); else submitTyped(); } });
+  /* typed answers go through an on-screen keypad; a physical keyboard works too */
+  var entry = '';
+  var tin = h('div.tin.disp.empty', '?'), pre = h('span.unit'), suf = h('span.unit');
+  var typedBox = h('div.typed', [pre, tin, suf]);
+  var pad = keypad({
+    digit: function (d) { if (answered || !cur || cur.type !== 'num') return; if ((d === '.' || d === '/') && entry.indexOf(d) >= 0) return; if (entry.length < 12) { entry += d; paint(); } },
+    back: function () { if (answered) return; entry = entry.slice(0, -1); paint(); },
+    pm: function () { if (answered || !cur || !cur.neg) return; negOn = !negOn; paint(); },
+    enter: function () { if (answered) advance(); else submitTyped(); }
+  });
+  function paint() {
+    tin.textContent = (negOn ? '\u2212' : '') + (entry || '?'); tin.classList.toggle('empty', !entry);
+    pad.pm.classList.toggle('on', negOn);
+    pad.enter.textContent = answered ? (idx + 1 < n ? 'Next' : 'See results') : 'Check';
+  }
   function onKey(ev) {
     if (!document.body.contains(root)) { document.removeEventListener('keydown', onKey); return; }
-    if (ev.key === 'Enter' && answered && document.activeElement !== tin) { ev.preventDefault(); advance(); }
+    if (ev.key === 'Enter') { ev.preventDefault(); if (answered) advance(); else if (cur && cur.type === 'num') submitTyped(); return; }
+    if (!cur || cur.type !== 'num' || answered) return;
+    if (/^[0-9.\/]$/.test(ev.key)) { pad.press(ev.key); ev.preventDefault(); }
+    else if (ev.key === 'Backspace') { pad.press('back'); ev.preventDefault(); }
+    else if (ev.key === '-' && cur.neg) { pad.press('pm'); ev.preventDefault(); }
   }
   document.addEventListener('keydown', onKey);
   function head() {
@@ -217,12 +246,11 @@ function playRound(o) {
     stemBox.appendChild(h('div.stem' + (it.big ? '.big' : ''), it.q));
     P.clear(fbBox);
     if (it.type === 'num') {
-      if (typedBox.parentNode !== ansBox) { P.clear(ansBox); ansBox.appendChild(typedBox); ansBox.appendChild(hint); }
+      if (typedBox.parentNode !== ansBox) { P.clear(ansBox); ansBox.appendChild(typedBox); ansBox.appendChild(pad); }
       pre.textContent = it.unit === '$' ? '$' : ''; suf.textContent = it.unit && it.unit !== '$' ? it.unit : '';
-      pm.classList.toggle('hidden', !it.neg); negOn = false; pm.classList.remove('on');
-      tin.value = ''; tin.classList.remove('ok', 'bad'); go.textContent = 'Check';
-      if (idx === 0) window.scrollTo(0, 0);
-      tin.focus();
+      pad.pm.classList.toggle('dim', !it.neg); negOn = false; entry = '';
+      tin.classList.remove('ok', 'bad'); paint();
+      window.scrollTo(0, 0);
     } else {
       P.clear(ansBox);
       var choices = h('div.choices' + (it.big ? '.grid2' : '')), btns = [];
@@ -241,12 +269,13 @@ function playRound(o) {
     }
   }
   function submitTyped() {
-    var v = parseNumber(tin.value);
-    if (v == null) { tin.focus(); return; }
+    var v = parseNumber(entry);
+    if (v == null) return;
     if (negOn) v = -Math.abs(v);
     var ok = typedOk(v, cur);
-    tin.classList.add(ok ? 'ok' : 'bad'); go.textContent = 'Next';
+    tin.classList.add(ok ? 'ok' : 'bad');
     finishAnswer(ok, cur.ansText);
+    paint();
   }
   function finishAnswer(ok, ansText) {
     answered = true;
@@ -300,7 +329,8 @@ function playRound(o) {
 
 /* ---------- grid games ---------- */
 function playGrid(def) {
-  var s = settingsFor(def), g = def.gen(s), checked = false, inputs = [], cellEls = [];
+  var s = settingsFor(def), g = def.gen(s), checked = false, fills = [], cellEls = [], curCell = null;
+  function selectCell(el) { if (curCell) curCell.classList.remove('cur'); curCell = el; el.classList.add('cur'); }
   var root = h('div.pg.pg-prac'); P.mount(root, def.title);
   var wrap = h('div.round', [h('div.rhead', [h('a', { href: '#/practice/grid/' + def.id }, '← ' + def.title), h('span.spacer'), h('span', g.targets + ' to find')]), h('div.stem', g.q)]);
   var gridEl = h('div.ggrid', { style: 'grid-template-columns:repeat(' + g.cols + ',1fr)' });
@@ -309,20 +339,39 @@ function playGrid(def) {
     if (c.head) el = h('div.gcell.head', c.show);
     else if (g.mode === 'select') { el = h('button.gcell', { type: 'button' }, c.show); el.addEventListener('click', function () { if (!checked) el.classList.toggle('sel'); }); }
     else {
-      var inp = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'off', 'aria-label': 'cell' });
-      inp.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); var k = inputs.indexOf(inp); if (k + 1 < inputs.length) inputs[k + 1].focus(); else check(); } });
-      inputs.push(inp); el = h('div.gcell.fill', inp);
+      el = h('div.gcell.fill', h('span.val', ''));
+      el.addEventListener('click', function () { if (!checked) selectCell(el); });
+      fills.push(el);
     }
     cellEls.push(el); gridEl.appendChild(el);
   });
   wrap.appendChild(gridEl);
-  wrap.appendChild(h('div.glegend', g.mode === 'select' ? 'Tap a number to mark it; tap again to unmark. Then press Check.' : 'Type each product, then press Check. Enter jumps to the next cell.'));
+  wrap.appendChild(h('div.glegend', g.mode === 'select' ? 'Tap a number to mark it; tap again to unmark. Then press Check.' : 'Tap a cell, key in the product, then Next cell. Press Check when the block is full.'));
+  var pad = null;
+  if (g.mode === 'fill') {
+    pad = keypad({
+      digit: function (d) { if (checked || !curCell || d === '.' || d === '/') return; var sp = curCell.firstChild; if (sp.textContent.length < 6) sp.textContent += d; },
+      back: function () { if (checked || !curCell) return; var sp = curCell.firstChild; sp.textContent = sp.textContent.slice(0, -1); },
+      pm: function () {},
+      enter: function () { if (checked) return; var k = fills.indexOf(curCell); if (k >= 0 && k + 1 < fills.length) selectCell(fills[k + 1]); else if (fills.length) selectCell(fills[0]); }
+    });
+    pad.pm.classList.add('dim'); pad.enter.textContent = 'Next cell';
+    wrap.appendChild(pad);
+    if (fills.length) selectCell(fills[0]);
+  }
   var checkBtn = h('button.btn.primary.block', { type: 'button' }, 'Check');
   checkBtn.addEventListener('click', check);
   wrap.appendChild(checkBtn);
   var resBox = h('div'); wrap.appendChild(resBox);
   root.appendChild(wrap);
-  if (inputs.length) setTimeout(function () { inputs[0].focus(); }, 50);
+  function onKey(ev) {
+    if (!document.body.contains(root)) { document.removeEventListener('keydown', onKey); return; }
+    if (!pad || checked) return;
+    if (/^[0-9]$/.test(ev.key)) { pad.press(ev.key); ev.preventDefault(); }
+    else if (ev.key === 'Backspace') { pad.press('back'); ev.preventDefault(); }
+    else if (ev.key === 'Enter' || ev.key === 'Tab') { pad.press('enter'); ev.preventDefault(); }
+  }
+  document.addEventListener('keydown', onKey);
   function check() {
     if (checked) return; checked = true;
     var hits = 0, wrong = 0, missed = 0, total = g.targets;
@@ -332,13 +381,13 @@ function playGrid(def) {
         var sel = el.classList.contains('sel'); el.classList.remove('sel'); el.disabled = true;
         if (c.target && sel) { hits++; el.classList.add('hit'); } else if (c.target) { missed++; el.classList.add('miss'); } else if (sel) { wrong++; el.classList.add('wrong'); }
       } else {
-        var inp = el.firstChild, v = parseNumber(inp.value); inp.readOnly = true;
+        var v = parseNumber(el.firstChild.textContent); el.classList.remove('cur');
         if (v !== null && v === c.ans) { hits++; el.classList.add('ok'); } else { wrong++; el.classList.add('bad'); el.appendChild(h('div.want', String(c.ans))); }
       }
     });
     var score = Math.max(0, hits - (g.mode === 'select' ? wrong : 0)), st = starsFor(score, total);
     var rec = recordRound('drills', def.id, score, total);
-    checkBtn.classList.add('hidden');
+    checkBtn.classList.add('hidden'); if (pad) pad.classList.add('hidden');
     var res = h('div.result', [starsBig(st), h('div.score', hits + ' / ' + total), h('div.gscore', g.mode === 'select' ? (missed + ' missed · ' + wrong + ' wrong tap' + (wrong === 1 ? '' : 's')) : (wrong + ' wrong')), h('div.small.muted', { style: 'text-align:left;white-space:pre-line' }, g.exp)]);
     if (rec) res.appendChild(h('div.muted.small', 'Best so far: ' + rec.best + ' / ' + rec.total + ' · ' + rec.plays + ' play' + (rec.plays === 1 ? '' : 's')));
     res.appendChild(h('div.btnrow', { style: 'justify-content:center' }, [h('button.btn.primary', { type: 'button', on: { click: P.render } }, 'New grid'), h('a.btn', { href: '#/practice/grid/' + def.id }, 'Settings'), h('a.btn', { href: '#/practice' }, 'Practice')]));
