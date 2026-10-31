@@ -124,7 +124,13 @@ function render() {
   for (var i = 0; i < routes.length; i++) {
     var m = hash.match(routes[i].re);
     if (!m) continue;
-    var r = routes[i].fn.apply(null, m.slice(1));
+    var r;
+    try { r = routes[i].fn.apply(null, m.slice(1)); }
+    catch (err) {
+      if (window.console) console.error(err);
+      mount(h('div.pg', [h('h1', 'Something went wrong'), h('p', 'This screen hit an error while loading. Going home and trying again usually fixes it.'), h('p.small.muted', String(err && err.message || err)), h('a.btn.primary', { href: '#/' }, 'Home')]), 'Error');
+      markActive(hash); window.scrollTo(0, 0); return;
+    }
     if (r === false) break;
     markActive(hash);
     if (r !== 'noscroll') window.scrollTo(0, 0);
@@ -222,6 +228,14 @@ route(/^#\/$/, function () {
   feats.appendChild(featCard('#/practice', '▶', 'Practice', ext.homePractice ? ext.homePractice() : 'Speed drills and GMAT-style question sets'));
   feats.appendChild(featCard('#/formulas', '★', 'Formula sheet', 'Every formula, what it is for, and where it lives'));
   pg.appendChild(feats);
+  var recent = (Array.isArray(store.recent) ? store.recent : []).filter(function (k) { var m = k.match(/^(num|lin|log)\/([a-z0-9-]+)$/); return m && document.getElementById('tpl-' + m[1] + '-' + m[2]); });
+  if (recent.length || store.lastPlay) {
+    pg.appendChild(h('div.fsec', 'Jump back in'));
+    var chips = h('div.chips');
+    if (store.lastPlay && store.lastPlay.href) chips.appendChild(h('a.chip.on', { href: store.lastPlay.href }, '\u25B6 ' + store.lastPlay.title));
+    recent.forEach(function (k) { var m = k.split('/'); chips.appendChild(h('a.chip', { href: '#/' + k }, titleOf(m[0], m[1]))); });
+    pg.appendChild(chips);
+  }
   var realm = '', cards = null;
   SECTIONS.forEach(function (s) {
     if (s.realm !== realm) { realm = s.realm; pg.appendChild(h('div.fsec', REALMS[realm].label)); cards = h('div.cards'); pg.appendChild(cards); }
@@ -254,9 +268,24 @@ route(/^#\/(num|lin|log)\/([a-z0-9-]+)$/, function (realm, id) {
   view.appendChild(t.content.cloneNode(true));
   var pg = view.firstElementChild;
   var s = sectionOf(realm, id);
+  if (pg && s) {
+    var idx = -1;
+    for (var i = 0; i < s.pages.length; i++) if (s.pages[i].id === id) idx = i;
+    var pager = h('div.pager');
+    if (idx > 0) pager.appendChild(h('a.pbtn.prev', { href: '#/' + realm + '/' + s.pages[idx - 1].id }, [h('small', '\u2190 Previous'), h('b', s.pages[idx - 1].title)]));
+    else pager.appendChild(h('a.pbtn.prev', { href: '#/sec/' + realm + '/' + s.id }, [h('small', '\u2190 Section'), h('b', s.id + ' \u00b7 ' + s.title)]));
+    if (idx >= 0 && idx < s.pages.length - 1) pager.appendChild(h('a.pbtn.next', { href: '#/' + realm + '/' + s.pages[idx + 1].id }, [h('small', 'Next \u2192'), h('b', s.pages[idx + 1].title)]));
+    else pager.appendChild(h('a.pbtn.next', { href: '#/sec/' + realm + '/' + s.id }, [h('small', 'Done \u2192'), h('b', 'Back to ' + s.id + ' \u00b7 ' + s.title)]));
+    pg.appendChild(pager);
+  }
   if (ext.related && pg) { var r = ext.related(realm, s, id); if (r) pg.appendChild(r); }
   setTitle(titleOf(realm, id));
+  remember(realm + '/' + id);
 });
+function remember(key) {
+  var list = Array.isArray(store.recent) ? store.recent.filter(function (k) { return k !== key; }) : [];
+  list.unshift(key); store.recent = list.slice(0, 6); save();
+}
 
 /* ---------- views: formula sheet ---------- */
 route(/^#\/formulas(?:\/([a-z0-9-]+))?$/, function (slug) {
@@ -293,6 +322,7 @@ route(/^#\/about$/, function () {
   var pg = h('div.pg', [h('h1', 'About')]);
   pg.appendChild(h('p', 'Philomath Reference is a single-page study site for the GMAT: ' + pageCount + ' reference pages exported from the Philomath app, a formula sheet, a must-know list you can test yourself on, and practice drills and question sets.'));
   pg.appendChild(h('div.fsec', 'Install on your phone'));
+  var ib = ext.installButton ? ext.installButton() : null; if (ib) pg.appendChild(ib);
   pg.appendChild(h('p', 'iPhone: open this site in Safari, tap Share, then “Add to Home Screen”. Android: open in Chrome, tap the menu, then “Add to Home screen” or “Install app”. Once it has loaded one time it keeps working without a connection.'));
   pg.appendChild(h('div.fsec', 'Theme'));
   pg.appendChild(themeSeg());
@@ -319,7 +349,27 @@ applyTheme();
 buildNav();
 window.addEventListener('hashchange', render);
 document.addEventListener('DOMContentLoaded', render);
-if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-  window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+function showUpdateBar() {
+  if (document.getElementById('updbar')) return;
+  var bar = h('div.updbar', { id: 'updbar' }, ['A new version is ready.', h('button', { type: 'button', on: { click: function () { location.reload(); } } }, 'Reload')]);
+  document.body.appendChild(bar);
 }
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').then(function (reg) {
+      reg.addEventListener('updatefound', function () {
+        var nw = reg.installing; if (!nw) return;
+        nw.addEventListener('statechange', function () { if (nw.state === 'installed' && navigator.serviceWorker.controller) showUpdateBar(); });
+      });
+    }).catch(function () {});
+  });
+}
+function netState() { document.body.classList.toggle('offline', navigator.onLine === false); }
+window.addEventListener('online', netState); window.addEventListener('offline', netState); netState();
+var installEvent = null;
+window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); installEvent = e; });
+ext.installButton = function () {
+  if (!installEvent) return null;
+  return h('button.btn.primary', { type: 'button', on: { click: function () { var ev = installEvent; installEvent = null; ev.prompt(); } } }, 'Install app');
+};
 })();

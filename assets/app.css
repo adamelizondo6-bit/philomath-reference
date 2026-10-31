@@ -294,3 +294,28 @@ nav#side a.sec-all{font-size:12.5px;color:var(--accent);padding-top:3px;padding-
 .tin.disp.empty{color:var(--text-secondary)}
 .gcell.cur{box-shadow:0 0 0 2px var(--accent) inset;border-color:var(--accent)}
 .gcell .val{font-weight:700;min-height:1em}
+
+/* ---------- UX pass: pager, recent, network, update bar, touch, hub density ---------- */
+.pager{display:flex;gap:10px;margin-top:26px}
+.pbtn{flex:1;display:block;border:1px solid var(--border);border-radius:12px;padding:10px 12px;text-decoration:none;color:var(--text);background:var(--background-element);min-width:0}
+.pbtn small{display:block;font-size:12px;color:var(--text-secondary);font-weight:700;margin-bottom:2px}
+.pbtn b{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pbtn.next{text-align:right}
+.net{display:none;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:3px 7px;border-radius:999px;background:var(--incorrect-soft);color:var(--incorrect);margin-left:4px;white-space:nowrap}
+body.offline .net{display:inline-block}
+.updbar{position:fixed;left:12px;right:12px;bottom:calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom));z-index:55;background:var(--primary-deep);color:#fff;padding:10px 14px;border-radius:12px;display:flex;align-items:center;gap:10px;font-size:14px;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.updbar button{margin-left:auto;background:#fff;color:#111;border:0;border-radius:8px;padding:7px 12px;font-weight:700;cursor:pointer}
+@media(min-width:900px){.updbar{bottom:16px;left:auto;right:16px;max-width:380px}}
+.fsec[id],.frow,.mk{scroll-margin-top:72px}
+button,.chip,.choice,.gcell,.keypad button,.tile,.card,.btn,.pbtn,#tabbar a{touch-action:manipulation}
+.result .stars span{display:inline-block;animation:pop .45s cubic-bezier(.2,1.4,.5,1) backwards}
+.result .stars span:nth-child(2){animation-delay:.12s}
+.result .stars span:nth-child(3){animation-delay:.24s}
+@keyframes pop{0%{transform:scale(.2);opacity:0}100%{transform:scale(1);opacity:1}}
+.tiles{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+.tile{padding:11px 12px}
+.tile b{font-size:14px}
+.tile .sub{font-size:12px}
+.btn.ghost{opacity:.55}
+.typed{margin-bottom:6px}
+.feedback{margin:10px 0 12px}

@@ -196,7 +196,7 @@ function playRound(o) {
   P.mount(root, o.title);
   if (!n) { root.appendChild(h('p.empty', 'Nothing to practice here yet.')); root.appendChild(h('a.btn', { href: o.back }, o.backLabel || 'Back')); return; }
   var headBox = h('div'), prog = h('i'), passBox = h('div'), stemBox = h('div'), ansBox = h('div'), fbBox = h('div');
-  root.appendChild(h('div.round', [headBox, h('div.prog', prog), passBox, stemBox, ansBox, fbBox]));
+  root.appendChild(h('div.round', [headBox, h('div.prog', prog), passBox, stemBox, ansBox]));
   /* typed answers go through an on-screen keypad; a physical keyboard works too */
   var entry = '';
   var tin = h('div.tin.disp.empty', '?'), pre = h('span.unit'), suf = h('span.unit');
@@ -246,7 +246,7 @@ function playRound(o) {
     stemBox.appendChild(h('div.stem' + (it.big ? '.big' : ''), it.q));
     P.clear(fbBox);
     if (it.type === 'num') {
-      if (typedBox.parentNode !== ansBox) { P.clear(ansBox); ansBox.appendChild(typedBox); ansBox.appendChild(pad); }
+      if (typedBox.parentNode !== ansBox) { P.clear(ansBox); ansBox.appendChild(typedBox); ansBox.appendChild(fbBox); ansBox.appendChild(pad); }
       pre.textContent = it.unit === '$' ? '$' : ''; suf.textContent = it.unit && it.unit !== '$' ? it.unit : '';
       pad.pm.classList.toggle('dim', !it.neg); negOn = false; entry = '';
       tin.classList.remove('ok', 'bad'); paint();
@@ -264,35 +264,37 @@ function playRound(o) {
         });
         btns.push(b); choices.appendChild(b);
       });
-      ansBox.appendChild(choices);
+      ansBox.appendChild(choices); ansBox.appendChild(fbBox);
       window.scrollTo(0, 0);
     }
   }
   function submitTyped() {
     var v = parseNumber(entry);
-    if (v == null) return;
+    if (v == null) { if (entry) return; tin.classList.add('bad'); finishAnswer(false, cur.ansText, true); paint(); return; }
     if (negOn) v = -Math.abs(v);
     var ok = typedOk(v, cur);
     tin.classList.add(ok ? 'ok' : 'bad');
     finishAnswer(ok, cur.ansText);
-    paint();
+    if (!(ok && o.auto)) paint();
   }
-  function finishAnswer(ok, ansText) {
+  function finishAnswer(ok, ansText, skipped) {
     answered = true;
     var it = cur, curIdx = idx;
     if (ok) { correct++; streak++; if (streak > best) best = streak; } else { streak = 0; misses.push(it); }
     if (o.onItem) o.onItem(it, ok);
     P.clear(headBox); headBox.appendChild(head());
+    if (ok && o.auto) { setTimeout(function () { if (idx === curIdx && answered) advance(); }, 450); return; }
     var f = h('div.feedback.' + (ok ? 'ok' : 'bad'));
-    f.appendChild(h('b.v', ok ? ('Correct' + (streak >= 3 ? ' — ' + streak + ' in a row' : '')) : ('Not quite — the answer is ' + ansText)));
+    f.appendChild(h('b.v', ok ? ('Correct' + (streak >= 3 ? ' — ' + streak + ' in a row' : '')) : ((skipped ? 'Skipped' : 'Not quite') + ' — the answer is ' + ansText)));
     if (it.e) f.appendChild(h('div.exp', it.e));
     if (it.l) f.appendChild(h('a.learn', { href: it.l }, 'Learn → ' + linkTitle(it.l)));
-    var next = h('button.btn.primary.block', { type: 'button', style: 'margin-top:12px' }, idx + 1 < n ? 'Next' : 'See results');
-    next.addEventListener('click', advance);
-    f.appendChild(next);
+    if (it.type !== 'num') {
+      var next = h('button.btn.primary.block', { type: 'button', style: 'margin-top:12px' }, idx + 1 < n ? 'Next' : 'See results');
+      next.addEventListener('click', advance);
+      f.appendChild(next);
+    }
     fbBox.appendChild(f);
-    if (ok && o.auto) setTimeout(function () { if (idx === curIdx && answered) advance(); }, 650);
-    else setTimeout(function () { f.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, 30);
+    setTimeout(function () { f.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, 30);
   }
   function advance() { if (!answered || advanced) return; advanced = true; idx++; if (idx < n) show(); else finish(); }
   function finish() {
@@ -513,6 +515,9 @@ function totalStars() {
   SETS.forEach(function (s) { possible += 3; var r = roundRec('sets', s.id); if (r) earned += r.stars || 0; });
   return { earned: earned, possible: possible };
 }
+var AREA = { A: 'Numbers', B: 'Numbers', C: 'Numbers', D: 'Numbers', E: 'Numbers', F: 'Algebra & functions', G: 'Algebra & functions', L: 'Algebra & functions', M: 'Algebra & functions', H: 'Statistics, sets & counting', I: 'Statistics, sets & counting', J: 'Word problems & rates', K: 'Word problems & rates' };
+var AREA_ORDER = ['Numbers', 'Algebra & functions', 'Statistics, sets & counting', 'Word problems & rates'];
+function setLastPlay(href, title) { store.lastPlay = { href: href, title: title }; save(); }
 P.route(/^#\/practice$/, function () {
   var ts = totalStars(), missedIds = Object.keys(P.bucket('missed'));
   var pg = h('div.pg.pg-prac', [
@@ -520,12 +525,20 @@ P.route(/^#\/practice$/, function () {
     h('p.intro', 'Drills are generated fresh every round and you type the answers (or switch any drill to multiple choice in its settings). Grid games test a whole block at once. Question sets are GMAT-style problems with full explanations. Three stars is 90% or better.'),
     h('div.flex', [h('b', '★ ' + ts.earned + ' of ' + ts.possible + ' stars')]),
     bar(ts.earned / Math.max(1, ts.possible)),
-    h('div.btnrow', [h('a.btn.primary', { href: '#/practice/mixed' }, 'Mixed set · 10 random'), h('a.btn', { href: '#/practice/missed' }, 'Retry missed (' + missedIds.length + ')')])
+    h('div.btnrow', [
+      store.lastPlay && store.lastPlay.href ? h('a.btn.primary', { href: store.lastPlay.href }, '▶ Continue: ' + store.lastPlay.title) : null,
+      h('a.btn' + (store.lastPlay ? '' : '.primary'), { href: '#/practice/mixed' }, 'Mixed set · 10 random'),
+      h('a.btn' + (missedIds.length ? '' : '.ghost'), { href: '#/practice/missed' }, 'Retry missed (' + missedIds.length + ')')
+    ])
   ]);
-  pg.appendChild(h('div.fsec', 'Drills · tap one to set it up'));
-  var grid = h('div.tiles');
-  DR.forEach(function (d) { grid.appendChild(h('a.tile', { href: '#/practice/drill/' + d.id }, [h('b', d.title), h('div.sub', d.sub), recLine(roundRec('drills', d.id))])); });
-  pg.appendChild(grid);
+  AREA_ORDER.forEach(function (area) {
+    var list = DR.filter(function (d) { return (AREA[d.sec] || 'Numbers') === area; });
+    if (!list.length) return;
+    pg.appendChild(h('div.fsec', 'Drills · ' + area));
+    var grid = h('div.tiles');
+    list.forEach(function (d) { grid.appendChild(h('a.tile', { href: '#/practice/drill/' + d.id }, [h('b', d.title), h('div.sub', d.sub), recLine(roundRec('drills', d.id))])); });
+    pg.appendChild(grid);
+  });
   pg.appendChild(h('div.fsec', 'Grid games'));
   var g2 = h('div.tiles');
   GR.forEach(function (d) { g2.appendChild(h('a.tile', { href: '#/practice/grid/' + d.id }, [h('b', d.title), h('div.sub', d.sub), recLine(roundRec('drills', d.id))])); });
@@ -549,6 +562,7 @@ P.route(/^#\/practice\/drill\/([a-z0-9-]+)$/, function (id) {
 P.route(/^#\/practice\/drill\/([a-z0-9-]+)\/play$/, function (id) {
   var d = drillById(id); if (!d) return false;
   var s = settingsFor(d);
+  setLastPlay('#/practice/drill/' + d.id + '/play', d.title);
   playRound({
     title: d.title, back: '#/practice', backLabel: 'Practice', settings: '#/practice/drill/' + d.id, items: genRound(d, s), letters: false, auto: true,
     onDone: function (c, n) { return recordRound('drills', d.id, c, n); }, again: P.render
@@ -560,6 +574,7 @@ P.route(/^#\/practice\/grid\/([a-z0-9-]+)$/, function (id) {
 });
 P.route(/^#\/practice\/grid\/([a-z0-9-]+)\/play$/, function (id) {
   var g = gridById(id); if (!g) return false;
+  setLastPlay('#/practice/grid/' + g.id + '/play', g.title);
   playGrid(g);
 });
 
@@ -574,6 +589,7 @@ P.route(/^#\/practice\/set\/([a-z0-9-]+)$/, function (id) {
   var s = setById(id); if (!s) return false;
   var items = s.questions.map(function (q) { return toItem(s, q); });
   if (s.kind !== 'rc') items = shuffle(items);
+  setLastPlay('#/practice/set/' + s.id, s.title);
   playRound({ title: s.title, back: '#/practice', backLabel: 'Practice', items: items, letters: true, auto: false, onItem: markMissed, onDone: function (c, n) { return recordRound('sets', s.id, c, n); }, again: P.render });
 });
 P.route(/^#\/practice\/mixed$/, function () {
