@@ -61,6 +61,8 @@ function mc(q, correct, cands, exp, opts) {
   var all = shuffle([correct].concat(ds));
   return { kind: 'mc', q: q, choices: all.map(f), ans: all.indexOf(correct), exp: exp, big: !!opts.big };
 }
+/* Yes / No question: two big buttons. */
+function yn(q, yes, exp) { return { kind: 'mc', q: q, choices: ['Yes', 'No'], ans: yes ? 0 : 1, exp: exp, big: true, yn: true }; }
 /* Display a numeric answer with its unit (used for feedback and for multiple-choice conversion). */
 function display(item, v) {
   var s = item.fmt ? item.fmt(v) : fmt(v);
@@ -70,7 +72,7 @@ function display(item, v) {
 function toChoice(item) { return mc(item.q, item.ans, item.cands, item.exp, { fmt: function (v) { return display(item, v); }, big: item.big, nonneg: !item.neg }); }
 
 /* ---------- option descriptors ---------- */
-var N_OPT = { key: 'n', label: 'Questions per round', values: [10, 20, 30], def: 10 };
+var N_OPT = { key: 'round', label: 'Round', values: ['q10', 'q20', 'q30', 't60', 't120', 't180', 'lives3'], labels: ['10 questions', '20 questions', '30 questions', '60-second sprint', '2-minute sprint', '3-minute sprint', '3 lives'], def: 'q10' };
 var MODE_OPT = { key: 'mode', label: 'Answers', values: ['type', 'choice'], labels: ['Type them in', 'Multiple choice'], def: 'type' };
 function pickOpt(key, label, values, def, labels) { return { key: key, label: label, values: values, labels: labels || null, def: def }; }
 function multiOpt(key, label, values, def, labels, any) { return { key: key, label: label, type: 'multi', values: values, labels: labels || null, def: def, any: !!any }; }
@@ -152,9 +154,14 @@ drill('fracpct', 'Fractions ↔ percents ↔ decimals', 'The equivalents table, 
 /* ---------- primes 1–100 ---------- */
 var ODD_COMPOSITES = [9, 21, 27, 33, 39, 49, 51, 57, 63, 69, 77, 81, 87, 91, 93, 99];
 drill('primes', 'Primes 1–100', 'Spot the prime, count primes in a range, next prime up or down', 'B',
-  [N_OPT, MODE_OPT, kindsOpt([['which', 'which one is prime'], ['count', 'how many primes in a range'], ['next', 'next or previous prime']])],
+  [N_OPT, MODE_OPT, kindsOpt([['which', 'which one is prime'], ['isprime', 'is it prime? (yes / no)'], ['count', 'how many primes in a range'], ['next', 'next or previous prime']])],
   function (s) {
     var k = kind(s);
+    if (k === 'isprime') {
+      var cand = Math.random() < 0.5 ? pick(PRIMES.filter(function (x) { return x >= 11; })) : pick(ODD_COMPOSITES);
+      var pr = isPrime(cand), f0 = smallestFactor(cand);
+      return yn('Is ' + cand + ' prime?', pr, pr ? cand + ' is prime — no prime up to √' + cand + ' divides it.' : cand + ' = ' + f0 + MUL + (cand / f0) + ', so it is not prime.');
+    }
     if (k === 'which') {
       var p = pick(PRIMES.filter(function (x) { return x >= 11; }));
       var comps = shuffle(ODD_COMPOSITES.slice()).slice(0, 3);
@@ -176,9 +183,14 @@ drill('primes', 'Primes 1–100', 'Spot the prime, count primes in a range, next
 var RULES = { 3: 'digit sum is a multiple of 3', 4: 'last two digits form a multiple of 4', 6: 'even and digit sum is a multiple of 3', 8: 'last three digits form a multiple of 8', 9: 'digit sum is a multiple of 9', 11: 'alternating digit sum is a multiple of 11' };
 function digitSum(n) { return String(n).split('').reduce(function (a, c) { return a + Number(c); }, 0); }
 drill('divis', 'Divisibility', 'Rules for 3, 4, 6, 8, 9 and 11', 'A',
-  [N_OPT, MODE_OPT, multiOpt('divs', 'Divisors', [3, 4, 6, 8, 9, 11], [3, 4, 6, 8, 9, 11]), kindsOpt([['which', 'which number is divisible by d'], ['rem', 'remainder by 3 or 9 from the digit sum'], ['digit', 'the missing last digit']])],
+  [N_OPT, MODE_OPT, multiOpt('divs', 'Divisors', [3, 4, 6, 8, 9, 11], [3, 4, 6, 8, 9, 11]), kindsOpt([['which', 'which number is divisible by d'], ['yesno', 'is it divisible? (yes / no)'], ['rem', 'remainder by 3 or 9 from the digit sum'], ['digit', 'the missing last digit']])],
   function (s) {
     var k = kind(s), d, n;
+    if (k === 'yesno') {
+      d = pick(s.divs); n = rint(100, 99999); if (Math.random() < 0.5) n = n - (n % d);
+      var div = n % d === 0;
+      return yn('Is ' + fmt(n) + ' divisible by ' + d + '?', div, 'Rule: ' + RULES[d] + '. ' + fmt(n) + (div ? ' = ' + d + MUL + fmt(n / d) + '.' : ' leaves remainder ' + (n % d) + '.'));
+    }
     if (k === 'which') {
       d = pick(s.divs);
       var yes; do { yes = rint(100, 9999); } while (yes % d !== 0);

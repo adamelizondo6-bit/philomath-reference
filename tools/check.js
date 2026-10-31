@@ -66,7 +66,7 @@ D.forEach(function (d) {
     if (q && q.kind === 'num') {
       ok = typeof q.q === 'string' && typeof q.ans === 'number' && isFinite(q.ans) && typeof q.exp === 'string' && !badText(q.q + q.exp);
       if (ok) { var m = U.toChoice(q); ok = m.choices.length === 4 && new Set(m.choices).size === 4 && m.ans >= 0 && m.ans < 4 && !badText(m.choices.join()); }
-    } else ok = q && q.kind === 'mc' && q.choices.length === 4 && new Set(q.choices).size === 4 && q.ans >= 0 && q.ans < 4 && !badText(q.q + q.choices.join() + q.exp);
+    } else ok = q && q.kind === 'mc' && (q.choices.length === 4 || (q.yn && q.choices.length === 2)) && new Set(q.choices).size === q.choices.length && q.ans >= 0 && q.ans < q.choices.length && !badText(q.q + q.choices.join() + q.exp);
     if (!ok) { err('drill ' + d.id + ' produced a bad question with ' + JSON.stringify(s) + ': ' + JSON.stringify(q).slice(0, 200)); break; }
   }
 });

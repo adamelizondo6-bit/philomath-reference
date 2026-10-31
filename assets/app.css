@@ -319,3 +319,22 @@ button,.chip,.choice,.gcell,.keypad button,.tile,.card,.btn,.pbtn,#tabbar a{touc
 .btn.ghost{opacity:.55}
 .typed{margin-bottom:6px}
 .feedback{margin:10px 0 12px}
+
+/* ---------- round modes: clocks, lives, exam review, set options ---------- */
+.clock{font-variant-numeric:tabular-nums;font-weight:800}
+.clock.over{color:var(--incorrect)}
+.clock.q{color:var(--text-secondary);font-weight:700}
+.clock.q.over{color:var(--incorrect)}
+.lives{color:var(--incorrect);letter-spacing:2px;font-size:15px}
+.prog i.drain{transition:width .25s linear}
+.review{margin-top:12px;text-align:left}
+.review .miss .your{font-size:13px;margin-top:4px}
+.review .miss .your.ok{color:var(--correct)}
+.review .miss .your.bad{color:var(--incorrect)}
+.review .miss .t{font-size:12px;color:var(--text-secondary);float:right}
+.modeline{font-size:14px;color:var(--text-secondary);margin:4px 0 2px}
+.daily{font-size:13px;color:var(--text-secondary);margin:4px 0 10px}
+.swipehint{font-size:12.5px;color:var(--text-secondary);text-align:center;margin-top:8px}
+.card-swipe{transition:transform .15s ease,opacity .15s ease}
+.card-swipe.left{transform:translateX(-40px) rotate(-3deg);opacity:.5}
+.card-swipe.right{transform:translateX(40px) rotate(3deg);opacity:.5}

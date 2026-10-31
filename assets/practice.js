@@ -20,10 +20,11 @@ var REALM_GROUP = { lin: 'R', log: 'V' };
 
 /* ---------- progress helpers ---------- */
 function starsFor(c, t) { var p = t ? c / t : 0; return p >= 0.9 ? 3 : p >= 0.7 ? 2 : p >= 0.5 ? 1 : 0; }
-function recordRound(bucket, id, correct, total) {
+function recordRound(bucket, id, correct, total, byCount) {
   var b = P.bucket(bucket), r = b[id] || { best: 0, total: total, stars: 0, plays: 0 };
   r.plays++; r.last = Date.now();
-  if (correct / total >= (r.best || 0) / (r.total || total)) { r.best = correct; r.total = total; }
+  if (byCount) { if (correct >= (r.best || 0)) { r.best = correct; r.total = total; } }
+  else if (correct / total >= (r.best || 0) / (r.total || total)) { r.best = correct; r.total = total; }
   r.stars = Math.max(r.stars || 0, starsFor(correct, total));
   b[id] = r; save(); return r;
 }
@@ -94,10 +95,19 @@ function settingsFor(def) {
   return s;
 }
 function saveSetting(def, key, val) { var b = P.bucket('dopts'); if (!b[def.id]) b[def.id] = {}; b[def.id][key] = val; save(); }
-function recLine(rec) { return rec ? h('div.sub', [P.stars(rec.stars), ' best ' + rec.best + '/' + rec.total + ' · ' + rec.plays + ' play' + (rec.plays === 1 ? '' : 's')]) : h('div.sub', 'Not played yet'); }
+function recLine(rec, id) {
+  var parts = [];
+  if (rec) parts.push(h('span', [P.stars(rec.stars), ' best ' + rec.best + '/' + rec.total + ' \u00b7 ' + rec.plays + ' play' + (rec.plays === 1 ? '' : 's')]));
+  if (id) {
+    var sprint = null;
+    ['t60', 't120', 't180', 'lives3'].forEach(function (m) { var r = roundRec('drills', id + '@' + m); if (r && (!sprint || r.best > sprint.best)) sprint = { best: r.best, m: m }; });
+    if (sprint) parts.push(h('span', (parts.length ? ' \u00b7 ' : '') + modeLabel(sprint.m) + ': ' + sprint.best));
+  }
+  return parts.length ? h('div.sub', parts) : h('div.sub', 'Not played yet');
+}
 function settingsPage(def, playHref, note) {
   var s = settingsFor(def);
-  var pg = h('div.pg.pg-prac', [h('div.crumb', [h('a', { href: '#/practice' }, 'Practice')]), h('h1', def.title), h('p.intro', def.sub), recLine(roundRec('drills', def.id))]);
+  var pg = h('div.pg.pg-prac', [h('div.crumb', [h('a', { href: '#/practice' }, 'Practice')]), h('h1', def.title), h('p.intro', def.sub), recLine(roundRec('drills', def.id), def.id)]);
   if (note) pg.appendChild(h('div.settings-note', note));
   def.opts.forEach(function (o) {
     var row = h('div.optrow', [h('div.lab', o.label)]), chips = h('div.chips'), btns = [];
@@ -138,10 +148,10 @@ function fromRaw(raw, s) {
     if (s.mode === 'choice') { var m = U.toChoice(raw); return { q: m.q, c: m.choices, a: m.ans, e: m.exp, big: bigN, l: null }; }
     return { type: 'num', q: raw.q, ans: raw.ans, unit: raw.unit, neg: raw.neg, tol: raw.tol, e: raw.exp, big: bigN, l: null, ansText: U.display(raw, raw.ans) };
   }
-  return { q: raw.q, c: raw.choices, a: raw.ans, e: raw.exp, big: !!raw.big && raw.q.length <= 30, l: null };
+  return { q: raw.q, c: raw.choices, a: raw.ans, e: raw.exp, big: !!raw.big && raw.q.length <= 30, yn: !!raw.yn, l: null };
 }
-function genRound(def, s) {
-  var n = s.n || 10, items = [], seen = {}, tries = 0;
+function genRound(def, s, n) {
+  var items = [], seen = {}, tries = 0;
   while (items.length < n && tries++ < n * 12) {
     var raw = def.gen(s);
     if (!raw || seen[raw.q]) continue;
@@ -149,6 +159,24 @@ function genRound(def, s) {
     items.push(fromRaw(raw, s));
   }
   return items;
+}
+function genStream(def, s) {
+  var seen = {};
+  return function () {
+    for (var t = 0; t < 30; t++) { var raw = def.gen(s); if (!raw) continue; if (!seen[raw.q] || t > 20) { seen[raw.q] = true; return fromRaw(raw, s); } }
+    return null;
+  };
+}
+function parseMode(mode) {
+  if (/^t\d+$/.test(mode)) return { limit: { time: parseInt(mode.slice(1), 10) }, n: 0 };
+  if (/^lives\d+$/.test(mode)) return { limit: { lives: parseInt(mode.slice(5), 10) }, n: 0 };
+  return { limit: null, n: parseInt(String(mode).replace(/^q/, ''), 10) || 10 };
+}
+function modeLabel(mode) {
+  var m = parseMode(mode);
+  if (m.limit && m.limit.time) return mmss(m.limit.time) + ' sprint';
+  if (m.limit && m.limit.lives) return m.limit.lives + ' lives';
+  return m.n + ' questions';
 }
 function mustQuizItem(it) {
   var typed = store.mustTyped !== false, a = String(it.a);
@@ -169,14 +197,28 @@ function mustQuizItem(it) {
   return { id: it.id, mk: it.id, q: it.q, c: choices, a: choices.indexOf(it.a), e: it.n || '', l: it.l, big: false };
 }
 
+/* ---------- daily activity ---------- */
+function todayKey() { var d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+function bumpDaily() { var d = P.bucket('daily'), k = todayKey(); d[k] = (d[k] || 0) + 1; save(); }
+function dailyStats() {
+  var d = P.bucket('daily'), today = d[todayKey()] || 0, streak = 0, dt = new Date();
+  for (var i = 0; i < 400; i++) {
+    var k = dt.getFullYear() + '-' + (dt.getMonth() + 1) + '-' + dt.getDate();
+    if (d[k]) streak++; else if (i > 0) break;
+    dt.setDate(dt.getDate() - 1);
+  }
+  return { today: today, streak: streak };
+}
+function dailyLine() { var d = dailyStats(); return h('div.daily', 'Today: ' + d.today + ' answered' + (d.streak > 1 ? ' · ' + d.streak + '-day streak' : d.today ? ' · streak started' : '')); }
+
 /* ---------- on-screen keypad (no text box to tap into) ---------- */
 function keypad(fn) {
   var el = h('div.keypad'), pm, enter;
   function key(label, cls, act) { var b = h('button' + (cls ? '.' + cls : ''), { type: 'button' }, label); b.addEventListener('click', act); el.appendChild(b); return b; }
   [['7', '8', '9', 'back'], ['4', '5', '6', 'pm'], ['1', '2', '3', '.'], ['0', '/']].forEach(function (row) {
     row.forEach(function (k) {
-      if (k === 'back') key('\u232b', null, function () { fn.back(); });
-      else if (k === 'pm') pm = key('\u00b1', 'pmk', function () { fn.pm(); });
+      if (k === 'back') key('⌫', null, function () { fn.back(); });
+      else if (k === 'pm') pm = key('±', 'pmk', function () { fn.pm(); });
       else if (k === '0') key('0', 'wide', function () { fn.digit('0'); });
       else key(k, null, function () { fn.digit(k); });
     });
@@ -187,17 +229,20 @@ function keypad(fn) {
   return el;
 }
 
-/* ---------- the round player (multiple choice + typed answers) ---------- */
+/* ---------- the round player ----------
+   o: { title, back, backLabel, settings, items, more (fn for unlimited modes), limit ({time} | {lives} | null),
+        letters, auto, deferred (exam mode: feedback at the end), pace (seconds per question, 0 = off), strict,
+        cls, onItem, onDone(correct, total, stars, extra), again, againLabel } */
 function playRound(o) {
-  var items = o.items, n = items.length, idx = 0, correct = 0, streak = 0, best = 0, misses = [], t0 = Date.now(), lastPassage = null;
-  var cur = null, answered = false, advanced = false, negOn = false;
-  var root = h('div.pg.' + (o.cls || 'pg-prac'));
+  var items = (o.items || []).slice(), more = o.more || null, limit = o.limit || null, fixedN = limit ? 0 : items.length;
+  var idx = 0, correct = 0, wrongs = 0, streak = 0, best = 0, misses = [], answers = [], t0 = Date.now(), qStart = Date.now(), lastPassage = null;
+  var cur = null, answered = false, advanced = false, negOn = false, ended = false, timerId = null, choiceBtns = [];
   P.ext.lastRound = items;
+  var root = h('div.pg.' + (o.cls || 'pg-prac'));
   P.mount(root, o.title);
-  if (!n) { root.appendChild(h('p.empty', 'Nothing to practice here yet.')); root.appendChild(h('a.btn', { href: o.back }, o.backLabel || 'Back')); return; }
-  var headBox = h('div'), prog = h('i'), passBox = h('div'), stemBox = h('div'), ansBox = h('div'), fbBox = h('div');
+  if (!limit && !fixedN) { root.appendChild(h('p.empty', 'Nothing to practice here yet.')); root.appendChild(h('a.btn', { href: o.back }, o.backLabel || 'Back')); return; }
+  var headBox = h('div'), prog = h('i' + (limit && limit.time ? '.drain' : '')), passBox = h('div'), stemBox = h('div'), ansBox = h('div'), fbBox = h('div');
   root.appendChild(h('div.round', [headBox, h('div.prog', prog), passBox, stemBox, ansBox]));
-  /* typed answers go through an on-screen keypad; a physical keyboard works too */
   var entry = '';
   var tin = h('div.tin.disp.empty', '?'), pre = h('span.unit'), suf = h('span.unit');
   var typedBox = h('div.typed', [pre, tin, suf]);
@@ -208,27 +253,59 @@ function playRound(o) {
     enter: function () { if (answered) advance(); else submitTyped(); }
   });
   function paint() {
-    tin.textContent = (negOn ? '\u2212' : '') + (entry || '?'); tin.classList.toggle('empty', !entry);
+    tin.textContent = (negOn ? '−' : '') + (entry || '?'); tin.classList.toggle('empty', !entry);
     pad.pm.classList.toggle('on', negOn);
-    pad.enter.textContent = answered ? (idx + 1 < n ? 'Next' : 'See results') : 'Check';
+    pad.enter.textContent = answered ? (hasNext() ? 'Next' : 'See results') : 'Check';
   }
+  function hasNext() { return limit ? !(limit.lives && wrongs >= limit.lives) : idx + 1 < fixedN; }
+  function remaining() { return limit && limit.time ? Math.max(0, limit.time - (Date.now() - t0) / 1000) : 0; }
+  function qElapsed() { return (Date.now() - qStart) / 1000; }
+  function head() {
+    var mid;
+    if (limit && limit.time) { var r = Math.ceil(remaining()); mid = h('span.clock' + (r <= 10 ? '.over' : ''), mmss(r)); }
+    else if (limit && limit.lives) { var hearts = ''; for (var i = 0; i < limit.lives; i++) hearts += i < limit.lives - wrongs ? '♥' : '♡'; mid = h('span.lives', hearts); }
+    else mid = h('span', (idx + 1) + ' / ' + fixedN);
+    var qc = o.pace ? h('span.clock.q' + (qElapsed() > o.pace ? '.over' : ''), mmss(Math.floor(qElapsed()))) : null;
+    return h('div.rhead', [h('a', { href: o.back }, '← ' + (o.backLabel || 'Back')), h('span.spacer'), qc, mid, h('span', '✓ ' + correct), streak >= 2 ? h('span.streak', '🔥 ' + streak) : null]);
+  }
+  function repaintHead() { P.clear(headBox); headBox.appendChild(head()); }
+  function tick() {
+    if (!document.body.contains(root)) { clearInterval(timerId); return; }
+    if (ended) return;
+    if (limit && limit.time) { prog.style.width = Math.round(remaining() / limit.time * 100) + '%'; if (remaining() <= 0) { finish(); return; } }
+    repaintHead();
+    if (o.pace && o.strict && !answered && qElapsed() >= o.pace) timeUp();
+  }
+  if ((limit && limit.time) || o.pace) timerId = setInterval(tick, 250);
   function onKey(ev) {
     if (!document.body.contains(root)) { document.removeEventListener('keydown', onKey); return; }
     if (ev.key === 'Enter') { ev.preventDefault(); if (answered) advance(); else if (cur && cur.type === 'num') submitTyped(); return; }
-    if (!cur || cur.type !== 'num' || answered) return;
-    if (/^[0-9.\/]$/.test(ev.key)) { pad.press(ev.key); ev.preventDefault(); }
-    else if (ev.key === 'Backspace') { pad.press('back'); ev.preventDefault(); }
-    else if (ev.key === '-' && cur.neg) { pad.press('pm'); ev.preventDefault(); }
+    if (!cur || answered) return;
+    if (cur.type === 'num') {
+      if (/^[0-9.\/]$/.test(ev.key)) { pad.press(ev.key); ev.preventDefault(); }
+      else if (ev.key === 'Backspace') { pad.press('back'); ev.preventDefault(); }
+      else if (ev.key === '-' && cur.neg) { pad.press('pm'); ev.preventDefault(); }
+      return;
+    }
+    var k = ev.key.toLowerCase(), i = -1;
+    if (cur.yn) { if (k === 'y') i = 0; else if (k === 'n') i = 1; }
+    if (i < 0 && /^[a-e]$/.test(k)) i = k.charCodeAt(0) - 97;
+    if (i < 0 && /^[1-5]$/.test(k)) i = parseInt(k, 10) - 1;
+    if (i >= 0 && i < choiceBtns.length) { choiceBtns[i].click(); ev.preventDefault(); }
   }
   document.addEventListener('keydown', onKey);
-  function head() {
-    return h('div.rhead', [h('a', { href: o.back }, '← ' + (o.backLabel || 'Back')), h('span.spacer'), h('span', (idx + 1) + ' / ' + n), h('span', '✓ ' + correct), streak >= 2 ? h('span.streak', '🔥 ' + streak) : null]);
+  function nextItem() {
+    if (idx < items.length) return items[idx];
+    if (more) { var it = more(); if (it) { items.push(it); return it; } }
+    return null;
   }
   function show() {
-    cur = items[idx]; answered = false; advanced = false;
+    cur = nextItem(); if (!cur) { finish(); return; }
+    answered = false; advanced = false; qStart = Date.now(); choiceBtns = [];
     var it = cur;
-    P.clear(headBox); headBox.appendChild(head());
-    prog.style.width = Math.round(idx / n * 100) + '%';
+    repaintHead();
+    if (!limit) prog.style.width = Math.round(idx / fixedN * 100) + '%';
+    else if (limit.lives) prog.style.width = '0%';
     P.clear(passBox);
     if (it.p) {
       var pass = h('div.passage', it.p);
@@ -253,16 +330,16 @@ function playRound(o) {
       window.scrollTo(0, 0);
     } else {
       P.clear(ansBox);
-      var choices = h('div.choices' + (it.big ? '.grid2' : '')), btns = [];
+      var choices = h('div.choices' + (it.big ? '.grid2' : ''));
       it.c.forEach(function (c, i) {
         var b = h('button.choice', { type: 'button' }, [(o.letters && !it.big) ? h('span.lt', LETTERS[i]) : null, h('span', c)]);
         b.addEventListener('click', function () {
           if (answered) return;
           var ok = i === it.a;
-          btns.forEach(function (bb, j) { bb.disabled = true; if (j === it.a) bb.classList.add('correct'); if (j === i) bb.classList.add(ok ? 'picked' : 'wrong'); });
-          finishAnswer(ok, (o.letters && !it.big) ? LETTERS[it.a] : it.c[it.a]);
+          choiceBtns.forEach(function (bb, j) { bb.disabled = true; if (o.deferred) { if (j === i) bb.classList.add('picked'); return; } if (j === it.a) bb.classList.add('correct'); if (j === i) bb.classList.add(ok ? 'picked' : 'wrong'); });
+          finishAnswer(ok, (o.letters && !it.big) ? LETTERS[it.a] : it.c[it.a], null, i);
         });
-        btns.push(b); choices.appendChild(b);
+        choiceBtns.push(b); choices.appendChild(b);
       });
       ansBox.appendChild(choices); ansBox.appendChild(fbBox);
       window.scrollTo(0, 0);
@@ -270,54 +347,75 @@ function playRound(o) {
   }
   function submitTyped() {
     var v = parseNumber(entry);
-    if (v == null) { if (entry) return; tin.classList.add('bad'); finishAnswer(false, cur.ansText, true); paint(); return; }
+    if (v == null) { if (entry) return; tin.classList.add('bad'); finishAnswer(false, cur.ansText, 'skip'); paint(); return; }
     if (negOn) v = -Math.abs(v);
     var ok = typedOk(v, cur);
-    tin.classList.add(ok ? 'ok' : 'bad');
-    finishAnswer(ok, cur.ansText);
-    if (!(ok && o.auto)) paint();
+    if (!o.deferred) tin.classList.add(ok ? 'ok' : 'bad');
+    finishAnswer(ok, cur.ansText, null, null, (negOn ? '−' : '') + entry);
+    if (!(ok && o.auto) && !o.deferred) paint();
   }
-  function finishAnswer(ok, ansText, skipped) {
+  function timeUp() {
+    if (answered || !cur) return;
+    if (cur.type === 'num') { if (!o.deferred) tin.classList.add('bad'); finishAnswer(false, cur.ansText, 'time'); paint(); }
+    else { choiceBtns.forEach(function (bb, j) { bb.disabled = true; if (!o.deferred && j === cur.a) bb.classList.add('correct'); }); finishAnswer(false, (o.letters && !cur.big) ? LETTERS[cur.a] : cur.c[cur.a], 'time'); }
+  }
+  function finishAnswer(ok, ansText, why, pickedIdx, typedText) {
     answered = true;
-    var it = cur, curIdx = idx;
-    if (ok) { correct++; streak++; if (streak > best) best = streak; } else { streak = 0; misses.push(it); }
+    var it = cur, curIdx = idx, secs = qElapsed();
+    answers.push({ it: it, ok: ok, why: why, picked: pickedIdx, typed: typedText, ansText: ansText, secs: secs });
+    if (ok) { correct++; streak++; if (streak > best) best = streak; } else { streak = 0; wrongs++; misses.push(it); }
     if (o.onItem) o.onItem(it, ok);
-    P.clear(headBox); headBox.appendChild(head());
+    bumpDaily();
+    repaintHead();
+    var livesOut = limit && limit.lives && wrongs >= limit.lives;
+    if (o.deferred && !livesOut) { setTimeout(function () { if (idx === curIdx && answered) advance(); }, 220); return; }
     if (ok && o.auto) { setTimeout(function () { if (idx === curIdx && answered) advance(); }, 450); return; }
     var f = h('div.feedback.' + (ok ? 'ok' : 'bad'));
-    f.appendChild(h('b.v', ok ? ('Correct' + (streak >= 3 ? ' — ' + streak + ' in a row' : '')) : ((skipped ? 'Skipped' : 'Not quite') + ' — the answer is ' + ansText)));
+    var label = ok ? ('Correct' + (streak >= 3 ? ' — ' + streak + ' in a row' : '')) : ((why === 'time' ? 'Time’s up' : why === 'skip' ? 'Skipped' : 'Not quite') + ' — the answer is ' + ansText);
+    f.appendChild(h('b.v', label));
     if (it.e) f.appendChild(h('div.exp', it.e));
     if (it.l) f.appendChild(h('a.learn', { href: it.l }, 'Learn → ' + linkTitle(it.l)));
     if (it.type !== 'num') {
-      var next = h('button.btn.primary.block', { type: 'button', style: 'margin-top:12px' }, idx + 1 < n ? 'Next' : 'See results');
+      var next = h('button.btn.primary.block', { type: 'button', style: 'margin-top:12px' }, hasNext() ? 'Next' : 'See results');
       next.addEventListener('click', advance);
       f.appendChild(next);
-    }
+    } else paint();
     fbBox.appendChild(f);
     setTimeout(function () { f.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, 30);
   }
-  function advance() { if (!answered || advanced) return; advanced = true; idx++; if (idx < n) show(); else finish(); }
+  function advance() {
+    if (!answered || advanced) return; advanced = true; idx++;
+    if (limit && limit.lives && wrongs >= limit.lives) { finish(); return; }
+    if (limit && limit.time && remaining() <= 0) { finish(); return; }
+    show();
+  }
   function finish() {
-    document.removeEventListener('keydown', onKey);
-    var secs = Math.round((Date.now() - t0) / 1000), st = starsFor(correct, n);
-    var rec = o.onDone ? o.onDone(correct, n, st) : null;
+    if (ended) return; ended = true;
+    clearInterval(timerId); document.removeEventListener('keydown', onKey);
+    var answeredN = answers.length, secs = Math.round((Date.now() - t0) / 1000), total = limit ? answeredN : fixedN;
+    var st = total ? starsFor(correct, total) : 0;
+    if (limit && limit.time && answeredN < 5) st = 0;
+    var avg = answeredN ? answers.reduce(function (a, x) { return a + x.secs; }, 0) / answeredN : 0;
+    var rec = o.onDone ? o.onDone(correct, total, st, { answered: answeredN, secs: secs }) : null;
     P.clear(root);
-    var res = h('div.result', [
-      starsBig(st), h('div.score', correct + ' / ' + n),
-      h('div.muted', st === 3 ? 'Excellent.' : st === 2 ? 'Solid — one more round for three stars.' : st === 1 ? 'Getting there.' : 'Keep at it — review the misses below.'),
-      h('div.statrow', [h('div', [h('b', Math.round(correct / n * 100) + '%'), 'accuracy']), h('div', [h('b', String(best)), 'best streak']), h('div', [h('b', mmss(secs)), 'time'])])
-    ]);
+    var res = h('div.result', [starsBig(st), h('div.score', correct + ' / ' + total)]);
+    if (limit && limit.time) res.appendChild(h('div.modeline', answeredN + ' answered in ' + mmss(limit.time) + ' · ' + (Math.round(correct / limit.time * 600) / 10) + ' correct per minute'));
+    else if (limit && limit.lives) res.appendChild(h('div.modeline', 'Survived ' + answeredN + ' question' + (answeredN === 1 ? '' : 's')));
+    else if (o.pace) res.appendChild(h('div.modeline', 'Average ' + mmss(Math.round(avg)) + ' per question · target ' + mmss(o.pace) + ' · ' + answers.filter(function (x) { return x.secs > o.pace; }).length + ' over time'));
+    res.appendChild(h('div.muted', st === 3 ? 'Excellent.' : st === 2 ? 'Solid — one more round for three stars.' : st === 1 ? 'Getting there.' : 'Keep at it — review below.'));
+    res.appendChild(h('div.statrow', [h('div', [h('b', (total ? Math.round(correct / total * 100) : 0) + '%'), 'accuracy']), h('div', [h('b', String(best)), 'best streak']), h('div', [h('b', mmss(secs)), 'time'])]));
     if (rec && rec.best != null) res.appendChild(h('div.muted.small', 'Best so far: ' + rec.best + ' / ' + rec.total + ' · ' + rec.plays + ' play' + (rec.plays === 1 ? '' : 's')));
     var row = h('div.btnrow', { style: 'justify-content:center' });
     if (o.again) row.appendChild(h('button.btn.primary', { type: 'button', on: { click: o.again } }, o.againLabel || 'Play again'));
     if (o.settings) row.appendChild(h('a.btn', { href: o.settings }, 'Settings'));
-    var list = h('div.hidden');
-    if (misses.length) {
-      var mb = h('button.btn', { type: 'button' }, 'Review misses (' + misses.length + ')');
+    var list = h('div.review.hidden'), reviewAll = !!o.deferred, pool = reviewAll ? answers : answers.filter(function (x) { return !x.ok; });
+    if (pool.length) {
+      var mb = h('button.btn', { type: 'button' }, reviewAll ? 'Review all (' + pool.length + ')' : 'Review misses (' + pool.length + ')');
       mb.addEventListener('click', function () { list.classList.toggle('hidden'); });
-      misses.forEach(function (m) {
-        var ansText = m.type === 'num' ? m.ansText : ((o.letters && !m.big) ? LETTERS[m.a] + ' — ' : '') + m.c[m.a];
-        list.appendChild(h('div.miss', [h('div.q', m.q), h('div.a', 'Answer: ' + ansText), m.e ? h('div.small.muted', m.e) : null, m.l ? h('a.learn.small', { href: m.l }, 'Learn → ' + linkTitle(m.l)) : null]));
+      pool.forEach(function (x) {
+        var m = x.it, your = x.why === 'time' ? 'ran out of time' : x.why === 'skip' ? 'skipped' : m.type === 'num' ? (x.typed || '') : ((o.letters && !m.big) ? LETTERS[x.picked] + ' — ' : '') + m.c[x.picked];
+        var ansT = m.type === 'num' ? m.ansText : ((o.letters && !m.big) ? LETTERS[m.a] + ' — ' : '') + m.c[m.a];
+        list.appendChild(h('div.miss', [o.pace || (limit && limit.time) ? h('span.t', mmss(Math.round(x.secs))) : null, h('div.q', m.q), h('div.your.' + (x.ok ? 'ok' : 'bad'), (x.ok ? '✓ ' : '✗ ') + 'Your answer: ' + your), x.ok ? null : h('div.a', 'Answer: ' + ansT), m.e ? h('div.small.muted', m.e) : null, m.l ? h('a.learn.small', { href: m.l }, 'Learn → ' + linkTitle(m.l)) : null]));
       });
       row.appendChild(mb);
     }
@@ -414,7 +512,11 @@ P.route(/^#\/must$/, function () {
     h('div.optrow', [h('div.lab', 'Number answers in quizzes'), h('div.chips', [
       h('button.chip' + (typed ? '.on' : ''), { type: 'button', on: { click: function () { store.mustTyped = true; save(); P.render(); } } }, 'Type them in'),
       h('button.chip' + (!typed ? '.on' : ''), { type: 'button', on: { click: function () { store.mustTyped = false; save(); P.render(); } } }, 'Multiple choice')
-    ])])
+    ])]),
+    h('div.optrow', [h('div.lab', 'Quiz round'), h('div.chips', ['q12', 'q24', 't60', 't120', 'lives3'].map(function (m) {
+      return h('button.chip' + ((store.mustRound || 'q12') === m ? '.on' : ''), { type: 'button', on: { click: function () { store.mustRound = m; save(); P.render(); } } }, modeLabel(m));
+    }))]),
+    dailyLine()
   ]);
   var realm = '';
   MK.groups.forEach(function (g) {
@@ -474,12 +576,20 @@ P.route(/^#\/must\/cards\/([A-Za-z]+)$/, function (scope) {
     ]);
     var back = h('div.feedback.hidden', [h('b.v', it.a), it.n ? h('div.exp', it.n) : null, it.l ? h('a.learn', { href: it.l }, 'Learn → ' + linkTitle(it.l)) : null]);
     var reveal = h('button.btn.primary.block', { type: 'button' }, 'Show answer');
+    var revealed = false, sx = null;
+    function miss() { markMust(it.id, false); bumpDaily(); missed.push(it); next(); }
+    function hit() { markMust(it.id, true); bumpDaily(); got++; next(); }
     var grade = h('div.btnrow.hidden', [
-      h('button.btn', { type: 'button', style: 'flex:1', on: { click: function () { markMust(it.id, false); missed.push(it); next(); } } }, '✗ Missed it'),
-      h('button.btn.primary', { type: 'button', style: 'flex:1', on: { click: function () { markMust(it.id, true); got++; next(); } } }, '✓ Got it')
+      h('button.btn', { type: 'button', style: 'flex:1', on: { click: miss } }, '\u2717 Missed it'),
+      h('button.btn.primary', { type: 'button', style: 'flex:1', on: { click: hit } }, '\u2713 Got it')
     ]);
-    reveal.addEventListener('click', function () { back.classList.remove('hidden'); grade.classList.remove('hidden'); reveal.classList.add('hidden'); });
-    card.appendChild(reveal); card.appendChild(back); card.appendChild(grade);
+    var hintSwipe = h('div.swipehint.hidden', 'Swipe right for got it, left for missed.');
+    reveal.addEventListener('click', function () { revealed = true; back.classList.remove('hidden'); grade.classList.remove('hidden'); hintSwipe.classList.remove('hidden'); reveal.classList.add('hidden'); });
+    card.classList.add('card-swipe');
+    card.addEventListener('touchstart', function (ev) { sx = ev.touches[0].clientX; }, { passive: true });
+    card.addEventListener('touchmove', function (ev) { if (sx === null || !revealed) return; var dx = ev.touches[0].clientX - sx; card.classList.toggle('right', dx > 40); card.classList.toggle('left', dx < -40); }, { passive: true });
+    card.addEventListener('touchend', function (ev) { if (sx === null) return; var dx = ev.changedTouches[0].clientX - sx; sx = null; card.classList.remove('left', 'right'); if (!revealed) return; if (dx > 70) hit(); else if (dx < -70) miss(); });
+    card.appendChild(reveal); card.appendChild(back); card.appendChild(grade); card.appendChild(hintSwipe);
     root.appendChild(card);
     window.scrollTo(0, 0);
   }
@@ -499,11 +609,13 @@ P.route(/^#\/must\/cards\/([A-Za-z]+)$/, function (scope) {
 /* ---------- must-knows: quiz ---------- */
 P.route(/^#\/must\/quiz\/([A-Za-z]+)$/, function (scope) {
   var pool = scopeItems(scope); if (!pool.length) return false;
-  var items = weakFirst(pool).slice(0, 12).map(mustQuizItem);
+  var mode = store.mustRound || 'q12', pm = parseMode(mode), items = [], more = null;
+  if (!pm.limit) items = shuffle(weakFirst(pool).slice(0, pm.n).map(mustQuizItem));
+  else { var queue = []; more = function () { if (!queue.length) queue = weakFirst(pool); return mustQuizItem(queue.shift()); }; }
   playRound({
-    title: 'Quiz · ' + scopeTitle(scope), back: '#/must', backLabel: 'Must-knows', items: shuffle(items), cls: 'pg-must', letters: true, auto: false,
+    title: 'Quiz \u00b7 ' + scopeTitle(scope), back: '#/must', backLabel: 'Must-knows', items: items, more: more, limit: pm.limit, cls: 'pg-must', letters: true, auto: false,
     onItem: function (it, ok) { markMust(it.mk, ok); },
-    onDone: function (c, n) { return recordRound('mustq', scope, c, n); },
+    onDone: function (c, n) { return recordRound('mustq', scope + (pm.limit ? '@' + mode : ''), c, n, !!pm.limit); },
     again: P.render, againLabel: 'Another round'
   });
 });
@@ -518,13 +630,17 @@ function totalStars() {
 var AREA = { A: 'Numbers', B: 'Numbers', C: 'Numbers', D: 'Numbers', E: 'Numbers', F: 'Algebra & functions', G: 'Algebra & functions', L: 'Algebra & functions', M: 'Algebra & functions', H: 'Statistics, sets & counting', I: 'Statistics, sets & counting', J: 'Word problems & rates', K: 'Word problems & rates' };
 var AREA_ORDER = ['Numbers', 'Algebra & functions', 'Statistics, sets & counting', 'Word problems & rates'];
 function setLastPlay(href, title) { store.lastPlay = { href: href, title: title }; save(); }
+function setOpts() { var o = store.setopts || {}; return { fb: o.fb === 'end' ? 'end' : 'each', timer: o.timer === 'pace' || o.timer === 'strict' ? o.timer : 'off' }; }
+function saveSetOpt(k, v) { var o = store.setopts || {}; o[k] = v; store.setopts = o; save(); P.render(); }
+function setPlayOpts() { var o = setOpts(); return { deferred: o.fb === 'end', pace: o.timer === 'off' ? 0 : (P.ext.paceSeconds || 120), strict: o.timer === 'strict' }; }
 P.route(/^#\/practice$/, function () {
   var ts = totalStars(), missedIds = Object.keys(P.bucket('missed'));
   var pg = h('div.pg.pg-prac', [
     h('h1', 'Practice'),
     h('p.intro', 'Drills are generated fresh every round and you type the answers (or switch any drill to multiple choice in its settings). Grid games test a whole block at once. Question sets are GMAT-style problems with full explanations. Three stars is 90% or better.'),
-    h('div.flex', [h('b', '★ ' + ts.earned + ' of ' + ts.possible + ' stars')]),
+    h('div.flex', [h('b', '\u2605 ' + ts.earned + ' of ' + ts.possible + ' stars')]),
     bar(ts.earned / Math.max(1, ts.possible)),
+    dailyLine(),
     h('div.btnrow', [
       store.lastPlay && store.lastPlay.href ? h('a.btn.primary', { href: store.lastPlay.href }, '▶ Continue: ' + store.lastPlay.title) : null,
       h('a.btn' + (store.lastPlay ? '' : '.primary'), { href: '#/practice/mixed' }, 'Mixed set · 10 random'),
@@ -536,19 +652,30 @@ P.route(/^#\/practice$/, function () {
     if (!list.length) return;
     pg.appendChild(h('div.fsec', 'Drills · ' + area));
     var grid = h('div.tiles');
-    list.forEach(function (d) { grid.appendChild(h('a.tile', { href: '#/practice/drill/' + d.id }, [h('b', d.title), h('div.sub', d.sub), recLine(roundRec('drills', d.id))])); });
+    list.forEach(function (d) { grid.appendChild(h('a.tile', { href: '#/practice/drill/' + d.id }, [h('b', d.title), h('div.sub', d.sub), recLine(roundRec('drills', d.id), d.id)])); });
     pg.appendChild(grid);
   });
   pg.appendChild(h('div.fsec', 'Grid games'));
   var g2 = h('div.tiles');
   GR.forEach(function (d) { g2.appendChild(h('a.tile', { href: '#/practice/grid/' + d.id }, [h('b', d.title), h('div.sub', d.sub), recLine(roundRec('drills', d.id))])); });
   pg.appendChild(g2);
+  var so = setOpts();
+  pg.appendChild(h('div.fsec', 'Question sets'));
+  pg.appendChild(h('div.optrow', [h('div.lab', 'Feedback'), h('div.chips', [
+    h('button.chip' + (so.fb === 'each' ? '.on' : ''), { type: 'button', on: { click: function () { saveSetOpt('fb', 'each'); } } }, 'After each question'),
+    h('button.chip' + (so.fb === 'end' ? '.on' : ''), { type: 'button', on: { click: function () { saveSetOpt('fb', 'end'); } } }, 'At the end (exam mode)')
+  ])]));
+  pg.appendChild(h('div.optrow', [h('div.lab', 'Timer \u00b7 2:00 per question'), h('div.chips', [
+    h('button.chip' + (so.timer === 'off' ? '.on' : ''), { type: 'button', on: { click: function () { saveSetOpt('timer', 'off'); } } }, 'Off'),
+    h('button.chip' + (so.timer === 'pace' ? '.on' : ''), { type: 'button', on: { click: function () { saveSetOpt('timer', 'pace'); } } }, 'Show the clock'),
+    h('button.chip' + (so.timer === 'strict' ? '.on' : ''), { type: 'button', on: { click: function () { saveSetOpt('timer', 'strict'); } } }, 'Strict \u2014 moves on at 2:00')
+  ])]));
   ['ps', 'ds', 'cr', 'rc'].forEach(function (kind) {
     var sets = SETS.filter(function (s) { return s.kind === kind; });
     if (!sets.length) return;
     pg.appendChild(h('div.fsec', KIND[kind]));
     var g3 = h('div.tiles');
-    sets.forEach(function (s) { g3.appendChild(h('a.tile', { href: '#/practice/set/' + s.id }, [h('b', s.title), h('div.sub', s.questions.length + ' questions' + (s.blurb ? ' · ' + s.blurb : '')), recLine(roundRec('sets', s.id))])); });
+    sets.forEach(function (s) { g3.appendChild(h('a.tile', { href: '#/practice/set/' + s.id }, [h('b', s.title), h('div.sub', s.questions.length + ' questions' + (s.blurb ? ' \u00b7 ' + s.blurb : '')), recLine(roundRec('sets', s.id))])); });
     pg.appendChild(g3);
   });
   P.mount(pg, 'Practice');
@@ -561,11 +688,12 @@ P.route(/^#\/practice\/drill\/([a-z0-9-]+)$/, function (id) {
 });
 P.route(/^#\/practice\/drill\/([a-z0-9-]+)\/play$/, function (id) {
   var d = drillById(id); if (!d) return false;
-  var s = settingsFor(d);
+  var s = settingsFor(d), mode = s.round || 'q10', pm = parseMode(mode);
   setLastPlay('#/practice/drill/' + d.id + '/play', d.title);
   playRound({
-    title: d.title, back: '#/practice', backLabel: 'Practice', settings: '#/practice/drill/' + d.id, items: genRound(d, s), letters: false, auto: true,
-    onDone: function (c, n) { return recordRound('drills', d.id, c, n); }, again: P.render
+    title: d.title + (pm.limit ? ' \u00b7 ' + modeLabel(mode) : ''), back: '#/practice', backLabel: 'Practice', settings: '#/practice/drill/' + d.id,
+    items: pm.limit ? [] : genRound(d, s, pm.n), more: pm.limit ? genStream(d, s) : null, limit: pm.limit, letters: false, auto: true,
+    onDone: function (c, n) { return recordRound('drills', d.id + (pm.limit ? '@' + mode : ''), c, n, !!pm.limit); }, again: P.render
   });
 });
 P.route(/^#\/practice\/grid\/([a-z0-9-]+)$/, function (id) {
@@ -590,11 +718,12 @@ P.route(/^#\/practice\/set\/([a-z0-9-]+)$/, function (id) {
   var items = s.questions.map(function (q) { return toItem(s, q); });
   if (s.kind !== 'rc') items = shuffle(items);
   setLastPlay('#/practice/set/' + s.id, s.title);
-  playRound({ title: s.title, back: '#/practice', backLabel: 'Practice', items: items, letters: true, auto: false, onItem: markMissed, onDone: function (c, n) { return recordRound('sets', s.id, c, n); }, again: P.render });
+  var po = setPlayOpts();
+  playRound({ title: s.title, back: '#/practice', backLabel: 'Practice', items: items, letters: true, auto: false, deferred: po.deferred, pace: po.pace, strict: po.strict, onItem: markMissed, onDone: function (c, n) { return recordRound('sets', s.id, c, n); }, again: P.render });
 });
 P.route(/^#\/practice\/mixed$/, function () {
-  var items = shuffle(allQuestions(function (s) { return s.kind !== 'rc'; })).slice(0, 10);
-  playRound({ title: 'Mixed set', back: '#/practice', backLabel: 'Practice', items: items, letters: true, auto: false, onItem: markMissed, onDone: function (c, n) { return recordRound('sets', 'mixed', c, n); }, again: P.render, againLabel: 'New mixed set' });
+  var items = shuffle(allQuestions(function (s) { return s.kind !== 'rc'; })).slice(0, 10), po = setPlayOpts();
+  playRound({ title: 'Mixed set', back: '#/practice', backLabel: 'Practice', items: items, letters: true, auto: false, deferred: po.deferred, pace: po.pace, strict: po.strict, onItem: markMissed, onDone: function (c, n) { return recordRound('sets', 'mixed', c, n); }, again: P.render, againLabel: 'New mixed set' });
 });
 P.route(/^#\/practice\/missed$/, function () {
   var ids = P.bucket('missed');
@@ -603,14 +732,15 @@ P.route(/^#\/practice\/missed$/, function () {
     P.mount(h('div.pg.pg-prac', [h('div.crumb', [h('a', { href: '#/practice' }, 'Practice')]), h('h1', 'Retry missed'), h('p', 'No missed questions saved. Questions you get wrong in any set land here until you answer them correctly.'), h('a.btn.primary', { href: '#/practice' }, 'Back to practice')]), 'Retry missed');
     return;
   }
-  playRound({ title: 'Retry missed', back: '#/practice', backLabel: 'Practice', items: items, letters: true, auto: false, onItem: markMissed, again: P.render });
+  var po = setPlayOpts();
+  playRound({ title: 'Retry missed', back: '#/practice', backLabel: 'Practice', items: items, letters: true, auto: false, deferred: po.deferred, pace: po.pace, strict: po.strict, onItem: markMissed, again: P.render });
 });
 
 /* ---------- hooks used by the core app ---------- */
 var questionCount = 0; SETS.forEach(function (s) { questionCount += s.questions.length; });
 P.ext.counts = function () { return { must: MK.items.length, questions: questionCount, drills: DR.length + GR.length }; };
 P.ext.homeMust = function () { var s = stats(MK.items), w = MK.items.filter(isWeak).length; return s.known + ' of ' + s.n + ' known' + (w ? ' · ' + w + ' weak' : '') + ' · cards & quizzes'; };
-P.ext.homePractice = function () { var t = totalStars(); return DR.length + ' drills · ' + GR.length + ' grid games · ' + questionCount + ' questions · ★ ' + t.earned + '/' + t.possible; };
+P.ext.homePractice = function () { var t = totalStars(), d = dailyStats(); return '\u2605 ' + t.earned + '/' + t.possible + ' \u00b7 today ' + d.today + ' answered' + (d.streak > 1 ? ' \u00b7 ' + d.streak + '-day streak' : ''); };
 P.ext.progressSummary = function () {
   var s = stats(MK.items), t = totalStars(), plays = 0, b, k;
   b = P.bucket('drills'); for (k in b) if (b.hasOwnProperty(k)) plays += b[k].plays || 0;

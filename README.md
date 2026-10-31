@@ -26,6 +26,15 @@ and question sets. It is plain HTML, CSS and JavaScript with no build step, serv
 `all` or `weak`) · `#/practice`, `#/practice/drill/<id>` (settings) and `#/practice/drill/<id>/play`, `#/practice/grid/<id>` and
 `#/practice/grid/<id>/play`, `#/practice/set/<id>`, `#/practice/mixed`, `#/practice/missed` · `#/about`.
 
+## Round formats
+
+Drills run as a fixed count (10, 20, 30), a timed sprint (60 s, 2 min, 3 min) or a 3-lives survival
+round; the choice lives on each drill's settings page. Must-know quizzes have the same choice on the
+Must-knows page. Question sets have two switches on the Practice page: feedback after each question or
+only at the end (exam mode, with a full review), and a 2:00-per-question clock that can be shown or
+enforced. All of this is handled by `playRound` in `assets/practice.js` through its `limit`,
+`deferred`, `pace` and `strict` options.
+
 ## Adding content
 
 **A must-know** is one object in `assets/mustknows.js`:
